@@ -143,9 +143,15 @@ export function analyzeTraining(runs) {
     avgPaceMinMi = `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`;
   }
 
-  const starts = runs.filter((r) => r.startLat && r.startLng).slice(0, 15);
-  const startLat = starts.length ? +(starts.reduce((s, r) => s + r.startLat, 0) / starts.length).toFixed(5) : null;
-  const startLng = starts.length ? +(starts.reduce((s, r) => s + r.startLng, 0) / starts.length).toFixed(5) : null;
+  // Use the MOST RECENT run's start, not the average. Averaging start points
+  // across runs in different places lands the "usual start" somewhere between
+  // them — with any geographic spread that can drift into open water. The
+  // latest real run start is the best guess for where you'll run next.
+  const starts = runs
+    .filter((r) => r.startLat && r.startLng)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  const startLat = starts.length ? +starts[0].startLat.toFixed(5) : null;
+  const startLng = starts.length ? +starts[0].startLng.toFixed(5) : null;
   const trailShare = runs.length ? +(runs.filter((r) => r.trail).length / runs.length).toFixed(2) : 0;
 
   return { weeks, weeklyAvg, longestMi, avgPaceMinMi, startLat, startLng, trailShare, runCount: runs.length };
