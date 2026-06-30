@@ -9,8 +9,11 @@ export default async function handler(req, res) {
   const s = sessionFromReq(req);
   if (!s) return res.status(401).json({ error: "connect Strava first" });
   try {
-    const cached = await kvGet(`profile:${s.athleteId}`);
-    if (cached) return res.status(200).json(cached);
+    const force = req.query.refresh === "1" || req.query.refresh === "true";
+    if (!force) {
+      const cached = await kvGet(`profile:${s.athleteId}`);
+      if (cached) return res.status(200).json(cached);
+    }
 
     const token = await getValidToken(s.athleteId);
     const runs = await recentRuns(token, 28);
