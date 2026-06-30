@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+.vercel/
+__pycache__/
+*.pyc
+.venv/
+.garminconnect/
+garmin_tokens.json
+bin/

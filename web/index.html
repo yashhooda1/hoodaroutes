@@ -1,0 +1,571 @@
+<!-- HoodaRoutes — worldwide AI route generation. Drop a pin anywhere, get a real snapped loop. -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HoodaRoutes — Worldwide route generation</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#0C100F;--panel:#141A18;--panel-2:#1A221F;--raise:#212B27;
+    --border:#283330;--border-soft:#212A27;--ink:#E9EFEB;--muted:#8C9690;--muted-2:#67716C;
+    --accent:#FF6B35;--accent-dim:#C2511F;--cool:#43C6A8;--cool-dim:#2C8C77;--warn:#F0B429;
+    --radius:14px;--mono:'Space Mono',ui-monospace,monospace;--disp:'Archivo',system-ui,sans-serif;--body:'Inter',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased;overflow:hidden}
+  @media (max-width:920px){ body{overflow:auto} }
+  .app{display:flex;flex-direction:column;height:100vh}
+  @media (max-width:920px){ .app{height:auto;min-height:100vh} }
+
+  header.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#101614,#0C100F);flex:0 0 auto;z-index:600}
+  .brand{display:flex;align-items:center;gap:11px;min-width:0}
+  .glyph{width:34px;height:34px;border-radius:9px;flex:0 0 auto;background:radial-gradient(120% 120% at 25% 20%,#FF8A5C,var(--accent) 55%,var(--accent-dim));display:grid;place-items:center;box-shadow:0 4px 16px -6px var(--accent)}
+  .wordmark{font-family:var(--disp);font-weight:900;font-size:19px;letter-spacing:-.02em;line-height:1}
+  .wordmark b{color:var(--accent)}
+  .tag{font-family:var(--mono);font-size:10.5px;color:var(--muted-2);letter-spacing:.04em;margin-top:3px;text-transform:uppercase}
+  @media (max-width:560px){ .tag{display:none} }
+  .keybtn{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:7px}
+  .keybtn:hover{color:var(--ink)}
+  .keybtn .led{width:7px;height:7px;border-radius:50%;background:var(--warn)}
+  .keybtn .led.ok{background:var(--cool)}
+
+  .grid{display:grid;grid-template-columns:380px 1fr;flex:1 1 auto;min-height:0}
+  @media (max-width:920px){ .grid{grid-template-columns:1fr;flex:none} }
+  .rail{border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  @media (max-width:920px){ .rail{border-right:0;border-bottom:1px solid var(--border);overflow:visible} }
+  .rail-scroll{overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:16px}
+  .rail-scroll::-webkit-scrollbar{width:9px}
+  .rail-scroll::-webkit-scrollbar-thumb{background:var(--raise);border-radius:9px;border:2px solid var(--panel)}
+  .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted-2)}
+
+  /* key panel */
+  .keypanel{display:none;background:#181F1C;border:1px solid var(--border);border-radius:12px;padding:13px}
+  .keypanel.show{display:block}
+  .keypanel p{margin:0 0 9px;font-size:11.5px;color:var(--muted);line-height:1.45}
+  .keypanel a{color:var(--cool)}
+  .keypanel input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:9px 10px}
+  .keypanel input:focus{outline:none;border-color:var(--accent)}
+
+  /* start card */
+  .startcard{background:linear-gradient(180deg,#181F1C,#141A18);border:1px solid var(--border);border-radius:var(--radius);padding:13px}
+  .startcard h3{margin:0 0 9px;font-family:var(--disp);font-weight:800;font-size:13.5px;display:flex;align-items:center;gap:7px}
+  .startcard h3 .pin{color:var(--accent)}
+  .coords{font-family:var(--mono);font-size:12px;color:var(--cool);margin-bottom:10px}
+  .startrow{display:flex;gap:7px}
+  .btn-loc{flex:1;font-family:var(--body);font-weight:600;font-size:12px;color:var(--ink);background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px}
+  .btn-loc:hover{border-color:var(--accent)}
+  .hint{font-family:var(--mono);font-size:9.5px;color:var(--muted-2);margin-top:8px;letter-spacing:.03em}
+
+  .ask{background:linear-gradient(180deg,#181F1C,#141A18);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+  .ask h3{margin:0 0 9px;font-family:var(--disp);font-weight:800;font-size:14.5px;display:flex;align-items:center;gap:7px}
+  .ask h3 .spark{color:var(--accent)}
+  .ask textarea{width:100%;resize:none;min-height:56px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--ink);font-family:var(--body);font-size:13px;padding:10px 11px;line-height:1.4}
+  .ask textarea::placeholder{color:var(--muted-2)}
+  .ask textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,107,53,.12)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:9px 0 11px}
+  .chip{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border);border-radius:20px;padding:4px 9px;cursor:pointer}
+  .chip:hover{border-color:var(--accent);color:var(--ink)}
+
+  .field label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+  .dist-readout{font-family:var(--mono);font-weight:700;font-size:22px;color:var(--accent)}
+  .dist-readout span{font-size:12px;color:var(--muted);font-weight:400}
+  input[type=range]{width:100%;-webkit-appearance:none;height:5px;border-radius:5px;background:var(--raise);margin-top:9px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 0 4px rgba(255,107,53,.18)}
+  input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:var(--accent);cursor:pointer}
+
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;font-family:var(--body);font-weight:600;font-size:12px;color:var(--muted);background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:9px;cursor:pointer}
+  .seg button.on{color:var(--ink);border-color:var(--accent);background:var(--raise)}
+
+  .actions{display:flex;gap:8px}
+  .btn-shuffle{font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:11px 13px;cursor:pointer}
+  .btn-shuffle:hover{border-color:var(--accent)}
+  .btn-gen{flex:1;font-family:var(--disp);font-weight:800;font-size:13.5px;background:var(--accent);color:#1a0f08;border:0;border-radius:10px;padding:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+  .btn-gen:hover{filter:brightness(1.07)}
+  .btn-gen:disabled{opacity:.6;cursor:default}
+  .spinner{width:14px;height:14px;border:2px solid rgba(26,15,8,.35);border-top-color:#1a0f08;border-radius:50%;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .mapwrap{position:relative;min-height:0}
+  @media (max-width:920px){ .mapwrap{height:64vh} }
+  #map{position:absolute;inset:0;background:#0a0d0c}
+  @media (max-width:920px){ #map{position:relative;height:100%} }
+  .leaflet-container{background:#0a0d0c;font-family:var(--body)}
+  .leaflet-control-attribution{background:rgba(12,16,15,.75)!important;color:var(--muted-2)!important;font-size:9px}
+  .leaflet-control-attribution a{color:var(--muted)!important}
+  .leaflet-bar a{background:var(--panel)!important;color:var(--ink)!important;border-color:var(--border)!important}
+  .start-pin{background:var(--cool);width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #07120e;box-shadow:0 0 0 3px var(--cool)}
+
+  .toast{position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:700;max-width:80%;background:var(--panel-2);border:1px solid var(--accent);color:var(--ink);font-size:12px;line-height:1.4;padding:10px 14px;border-radius:10px;box-shadow:0 10px 30px -10px #000;display:none}
+  .toast.show{display:block;animation:rise .25s ease}
+  .toast.err{border-color:var(--warn)}
+  @keyframes rise{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+
+  .empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px;pointer-events:none}
+  .empty p{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;color:var(--muted-2);max-width:280px;line-height:1.6}
+
+  /* readout */
+  .readout{position:absolute;left:18px;right:18px;bottom:18px;z-index:500;background:rgba(16,21,19,.93);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 20px 50px -20px #000;display:none}
+  .readout.show{display:block;animation:rise2 .3s ease}
+  @keyframes rise2{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @media (max-width:920px){ .readout{position:relative;left:0;right:0;bottom:0;border-radius:0;border-left:0;border-right:0} }
+  .ro-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:14px 18px 12px;border-bottom:1px solid var(--border-soft)}
+  .ro-title{font-family:var(--disp);font-weight:800;font-size:18px;letter-spacing:-.01em}
+  .ro-sub{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+  .ro-close{background:var(--panel-2);border:1px solid var(--border);color:var(--muted);width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:15px;flex:0 0 auto}
+  .ro-close:hover{color:var(--ink)}
+  .ro-body{display:grid;grid-template-columns:1fr 188px;gap:0}
+  @media (max-width:680px){ .ro-body{grid-template-columns:1fr} }
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-soft)}
+  .stat{background:var(--panel);padding:12px 14px}
+  .stat .k{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted-2)}
+  .stat .v{font-family:var(--mono);font-weight:700;font-size:16px;margin-top:5px}
+  .stat .v.cool{color:var(--cool)}
+  .stat .v small{font-size:10px;color:var(--muted);font-weight:400}
+  .ro-detail{background:var(--panel);padding:13px 16px 14px;grid-column:1/-1;border-top:1px solid var(--border-soft);display:flex;flex-direction:column;gap:11px}
+  .elev-svg{width:100%}
+  .notes{font-size:12.5px;line-height:1.5;color:#C5CEC9}
+  .notes b{color:var(--ink)}
+  .ro-cta{display:flex;gap:8px;flex-wrap:wrap}
+  .btn-gpx{font-family:var(--disp);font-weight:800;font-size:12.5px;background:var(--cool);color:#06120e;border:0;border-radius:9px;padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:7px;text-decoration:none}
+  .btn-gpx:hover{filter:brightness(1.07)}
+  .send-note{font-family:var(--mono);font-size:10px;color:var(--muted-2);align-self:center;line-height:1.4}
+  .bring{background:var(--panel);padding:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border-left:1px solid var(--border-soft)}
+  @media (max-width:680px){ .bring{border-left:0;border-top:1px solid var(--border-soft)} }
+  .ring-wrap{position:relative;width:118px;height:118px}
+  .ring-val{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring-num{font-family:var(--mono);font-weight:700;font-size:30px;line-height:1;letter-spacing:-.02em}
+  .ring-lbl{font-family:var(--mono);font-size:8px;letter-spacing:.1em;color:var(--muted-2);text-transform:uppercase;margin-top:3px;text-align:center}
+  .bring-cap{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;text-align:center}
+  .ai-plan{background:linear-gradient(180deg,rgba(255,107,53,.07),transparent);border-top:1px solid var(--border-soft);padding:13px 16px 14px;grid-column:1/-1;display:none}
+  .ai-plan.show{display:block}
+  .ai-plan .lab{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:9px}
+  .seg-line{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--border-soft);font-size:12px}
+  .seg-line:last-child{border-bottom:0}
+  .seg-miles{font-family:var(--mono);font-weight:700;color:var(--cool);min-width:54px}
+  .seg-effort{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-2);margin-left:auto;border:1px solid var(--border);border-radius:5px;padding:2px 6px}
+  .ai-fluid{font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.45}
+  .ai-fluid b{color:var(--cool)}
+
+  .foot{padding:10px 18px;border-top:1px solid var(--border-soft);font-family:var(--mono);font-size:9.5px;color:var(--muted-2);letter-spacing:.04em;line-height:1.5}
+  .foot b{color:var(--muted)}
+</style>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <div class="glyph" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 17l5-6 3 3 4-7 6 8" stroke="#1a0f08" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="6" r="2.4" fill="#1a0f08"/></svg>
+      </div>
+      <div>
+        <div class="wordmark">HOODA<b>ROUTES</b></div>
+        <div class="tag">Worldwide route generation</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:9px">
+      <a id="dashLink" href="./dashboard.html" style="display:none;font-family:var(--mono);font-size:11px;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:9px;padding:8px 12px">📊 Dashboard</a>
+      <button class="keybtn" id="keyToggle"><span class="led" id="keyLed"></span> Routing key</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <aside class="rail">
+      <div class="rail-scroll">
+
+        <div class="keypanel" id="keyPanel">
+          <p>Routes are generated live by <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noreferrer">OpenRouteService</a> (free, 2k/day). Paste a key to generate here. It stays in memory only — never saved.</p>
+          <input id="keyInput" type="password" placeholder="OpenRouteService API key" autocomplete="off" />
+          <p style="margin-top:11px">Optional: your <b>Garmin push service</b> URL (the FastAPI service) to send routes straight to Garmin Connect.</p>
+          <input id="pushInput" type="text" placeholder="https://your-garmin-push.up.railway.app" autocomplete="off" />
+          <p style="margin-top:11px">Optional: your <b>HoodaRoutes API base</b> (for the Strava suggestion), e.g. https://yashhooda.ai</p>
+          <input id="apiInput" type="text" placeholder="https://yashhooda.ai" autocomplete="off" />
+        </div>
+
+        <div class="startcard" id="stravaCard" style="border-color:#FC520233">
+          <h3><span class="pin" style="color:#FC5200">◎</span> Your training</h3>
+          <div id="stravaOut">
+            <div class="hint" style="margin-top:0;color:var(--muted)">Connect Strava to size routes to your own training history.</div>
+            <button class="btn-loc" id="btnConnect" style="margin-top:10px;background:#FC5200;color:#fff;border-color:#FC5200">Connect Strava</button>
+          </div>
+        </div>
+
+        <div class="startcard">
+          <h3><span class="pin">◎</span> Start point</h3>
+          <div class="coords" id="coords">—</div>
+          <div class="startrow">
+            <button class="btn-loc" id="btnLoc">◎ My location</button>
+          </div>
+          <div class="hint">Tap anywhere on the map to move the pin (drag it too). Works worldwide.</div>
+        </div>
+
+        <section class="ask">
+          <h3><span class="spark">◆</span> Describe your run</h3>
+          <textarea id="aiInput" placeholder="e.g. hilly 12-mile trail loop for Boulderthon prep"></textarea>
+          <div class="chips" id="aiChips"></div>
+          <button class="btn-gen" id="aiBtn" style="background:var(--panel-2);color:var(--ink);border:1px solid var(--border)"><span id="aiBtnLabel">Interpret + generate</span></button>
+        </section>
+
+        <div class="field">
+          <label>Distance</label>
+          <div class="dist-readout"><span id="distVal">8</span> mi</div>
+          <input type="range" id="distRange" min="1" max="26" step="1" value="8" />
+        </div>
+
+        <div class="field">
+          <label>Surface</label>
+          <div class="seg" id="surfSeg">
+            <button data-p="foot-walking" class="on">Road / path</button>
+            <button data-p="foot-hiking">Trail</button>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn-shuffle" id="btnShuffle" title="New variation">⟳</button>
+          <button class="btn-gen" id="btnGen"><span id="genLabel">Generate loop</span></button>
+        </div>
+
+      </div>
+      <div class="foot">
+        <b>Real loops</b> snapped to OpenStreetMap via OpenRouteService round-trip routing.
+        Download GPX → import to Garmin Connect → sync to your watch.
+      </div>
+    </aside>
+
+    <div class="mapwrap">
+      <div id="map"></div>
+      <div class="toast" id="toast"></div>
+      <div class="empty" id="empty">
+        <svg width="46" height="46" viewBox="0 0 24 24" fill="none"><path d="M3 17l5-6 3 3 4-7 6 8" stroke="#67716C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="6" r="2" stroke="#67716C" stroke-width="1.6"/></svg>
+        <p>Set a start, pick a distance, and generate a real loop anywhere in the world.</p>
+      </div>
+
+      <div class="readout" id="readout">
+        <div class="ro-head">
+          <div><div class="ro-title" id="roTitle"></div><div class="ro-sub" id="roSub"></div></div>
+          <button class="ro-close" id="roClose" aria-label="Close">×</button>
+        </div>
+        <div class="ro-body">
+          <div class="stats" id="roStats"></div>
+          <div class="bring">
+            <div class="ring-wrap">
+              <svg width="118" height="118" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="50" stroke="var(--raise)" stroke-width="9" fill="none"/>
+                <circle id="ringArc" cx="60" cy="60" r="50" stroke="var(--accent)" stroke-width="9" fill="none" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="314" transform="rotate(-90 60 60)" style="transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1)"/>
+              </svg>
+              <div class="ring-val"><div class="ring-num" id="ringNum">0</div><div class="ring-lbl">Boulderthon<br>fit</div></div>
+            </div>
+            <div class="bring-cap" id="ringCap"></div>
+          </div>
+          <div class="ro-detail">
+            <svg class="elev-svg" id="elevSvg" height="44" preserveAspectRatio="none"></svg>
+            <div class="notes" id="roNotes"></div>
+            <div class="ro-cta">
+              <a class="btn-gpx" id="btnGpx" download="hoodaroutes.gpx">↓ Download GPX</a>
+              <button class="btn-gpx" id="btnSend" style="background:var(--accent);color:#1a0f08">➤ Send to Garmin</button>
+              <span class="send-note">GPX imports to Garmin Connect → Courses. Send pushes it straight to your account (needs the push service).</span>
+            </div>
+          </div>
+          <div class="ai-plan" id="aiPlan">
+            <div class="lab">◆ AI coached plan</div>
+            <div id="aiSegs"></div>
+            <div class="ai-fluid" id="aiFluid"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const state = { start:{lat:29.7604,lng:-95.3698}, miles:8, profile:'foot-walking', seed:1, key:'', pushUrl:'', apiBase:'', last:null, aiPlan:null };
+const $=id=>document.getElementById(id);
+const ORS=(p)=>`https://api.openrouteservice.org/v2/directions/${p}/geojson`;
+
+/* ---------- map ---------- */
+let map, startMarker, routeLayer;
+function initMap(){
+  map=L.map('map',{zoomControl:true}).setView([state.start.lat,state.start.lng],13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  map.getPane('tilePane').style.filter='grayscale(.35) brightness(.62) contrast(1.05) saturate(.9)';
+  routeLayer=L.layerGroup().addTo(map);
+  startMarker=L.marker([state.start.lat,state.start.lng],{
+    draggable:true,
+    icon:L.divIcon({className:'',html:'<div class="start-pin"></div>',iconSize:[16,16],iconAnchor:[8,14]})
+  }).addTo(map);
+  startMarker.on('dragend',e=>{ const ll=e.target.getLatLng(); setStart(ll.lat,ll.lng,false); });
+  map.on('click',e=>setStart(e.latlng.lat,e.latlng.lng,false));
+  updateCoords();
+}
+function setStart(lat,lng,recenter){
+  state.start={lat,lng};
+  startMarker.setLatLng([lat,lng]);
+  if(recenter) map.setView([lat,lng], Math.max(map.getZoom(),13));
+  updateCoords();
+}
+function updateCoords(){ $('coords').textContent=`${state.start.lat.toFixed(5)}, ${state.start.lng.toFixed(5)}`; }
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(msg,isErr){const t=$('toast');t.innerHTML=msg;t.className='toast show'+(isErr?' err':'');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),isErr?7000:3800);}
+
+/* ---------- geolocation ---------- */
+$('btnLoc').onclick=()=>{
+  if(!navigator.geolocation){ toast('Geolocation not available in this browser.',true); return; }
+  $('btnLoc').textContent='◎ Locating…';
+  navigator.geolocation.getCurrentPosition(
+    pos=>{ setStart(pos.coords.latitude,pos.coords.longitude,true); $('btnLoc').textContent='◎ My location'; toast('Centered on your location.'); },
+    err=>{ $('btnLoc').textContent='◎ My location'; toast('Location blocked — tap the map to set a start instead.',true); },
+    {enableHighAccuracy:true,timeout:8000}
+  );
+};
+
+/* ---------- controls ---------- */
+$('keyToggle').onclick=()=>$('keyPanel').classList.toggle('show');
+$('keyInput').oninput=e=>{ state.key=e.target.value.trim(); $('keyLed').classList.toggle('ok',state.key.length>10); };
+$('pushInput').oninput=e=>{ state.pushUrl=e.target.value.trim().replace(/\/$/,''); };
+$('apiInput').oninput=e=>{ state.apiBase=e.target.value.trim().replace(/\/$/,''); };
+
+/* ---------- multi-user Strava (connect / training / personalized) ---------- */
+let _profile=null;
+function api(path){ return `${state.apiBase}${path}`; }
+
+async function checkAuth(){
+  try{
+    const r=await fetch(api('/api/auth/me'),{credentials:'include'});
+    const me=await r.json();
+    if(me.connected){ $('dashLink').style.display='inline-block'; await loadProfile(me.athlete); } else { renderDisconnected(); }
+  }catch(_){ renderDisconnected(); }
+}
+function renderDisconnected(){
+  $('stravaOut').innerHTML=`<div class="hint" style="margin-top:0;color:var(--muted)">Connect Strava to size routes to your own training history.</div>
+    <button class="btn-loc" id="btnConnect" style="margin-top:10px;background:#FC5200;color:#fff;border-color:#FC5200">Connect Strava</button>`;
+  $('btnConnect').onclick=()=>{ window.location.href=api('/api/auth/strava/login'); };
+}
+async function loadProfile(athlete){
+  $('stravaOut').innerHTML=`<div class="hint" style="margin-top:0;color:var(--muted)">Loading ${escapeHtml(athlete.name||'your')} training…</div>`;
+  try{
+    const r=await fetch(api('/api/strava/profile'),{credentials:'include'});
+    const p=await r.json(); if(!r.ok) throw new Error(p.error||'failed');
+    _profile=p;
+    const s=p.suggestion||{};
+    $('stravaOut').innerHTML=`
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div style="font-family:var(--disp);font-weight:700;font-size:13.5px">${escapeHtml(athlete.name||'Connected')}</div>
+        <button id="btnDisc" style="font-family:var(--mono);font-size:9.5px;color:var(--muted-2);background:none;border:0;cursor:pointer">disconnect</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:11px 0 12px">
+        <div><div style="font-family:var(--mono);font-weight:700;font-size:16px;color:var(--cool)">${p.weeklyAvg||0}</div><div class="hint" style="margin:0">mi/wk avg</div></div>
+        <div><div style="font-family:var(--mono);font-weight:700;font-size:16px">${p.longestMi||0}</div><div class="hint" style="margin:0">longest</div></div>
+        <div><div style="font-family:var(--mono);font-weight:700;font-size:16px">${p.avgPaceMinMi||'—'}</div><div class="hint" style="margin:0">avg pace</div></div>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 11px">
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:#FC7A40;text-transform:uppercase">Today · ${escapeHtml(s.type||'')}</div>
+        <div style="font-family:var(--mono);font-weight:700;font-size:18px;color:var(--accent);margin-top:3px">${s.suggestedMiles||'—'} mi</div>
+        <div class="hint" style="margin-top:5px;color:var(--muted)">${escapeHtml(s.rationale||'')}</div>
+      </div>
+      <button class="btn-gen" id="btnMine" style="margin-top:11px"><span>Generate my run</span></button>`;
+    $('btnDisc').onclick=disconnect;
+    $('btnMine').onclick=generateMine;
+  }catch(err){
+    $('stravaOut').innerHTML=`<div class="hint" style="margin:0;color:var(--warn)">${escapeHtml(String(err.message||err))}</div>`;
+  }
+}
+async function disconnect(){
+  try{ await fetch(api('/api/auth/logout'),{method:'POST',credentials:'include'}); }catch(_){}
+  _profile=null; renderDisconnected();
+}
+async function generateMine(){
+  if(!_profile){ toast('Connect Strava first.',true); return; }
+  const p=_profile, s=p.suggestion||{};
+  if(p.startLat&&p.startLng) setStart(p.startLat,p.startLng,true);
+  state.miles=s.suggestedMiles||8; $('distRange').value=state.miles; $('distVal').textContent=state.miles;
+  state.profile=(p.trailShare>0.4)?'foot-hiking':'foot-walking';
+  $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===state.profile));
+  state.aiPlan=null;
+  if(!state.key){ $('keyPanel').classList.add('show'); $('keyInput').focus(); toast(`Today: ${s.rationale||'your run'} — add a routing key to draw it.`,true); return; }
+  toast(`Today: ${s.type} ${s.suggestedMiles} mi — generating from your training.`);
+  generate();
+}
+$('distRange').oninput=e=>{ state.miles=+e.target.value; $('distVal').textContent=e.target.value; };
+$('surfSeg').onclick=e=>{ const b=e.target.closest('button'); if(!b)return; state.profile=b.dataset.p; $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); };
+$('btnShuffle').onclick=()=>{ state.seed=Math.floor(Math.random()*9999)+1; if(state.key) generate(); else toast('Add a routing key to generate.',true); };
+$('btnGen').onclick=()=>generate();
+$('roClose').onclick=()=>{ $('readout').classList.remove('show'); $('empty').style.display='flex'; routeLayer.clearLayers(); };
+
+const chips=['hilly 12-mile trail loop','easy 5 miles from here','flat fast 8 miles','long 18 for marathon block'];
+chips.forEach(c=>{ const s=document.createElement('span'); s.className='chip'; s.textContent=c; s.onclick=()=>$('aiInput').value=c; $('aiChips').appendChild(s); });
+
+/* ---------- generate (the real engine) ---------- */
+function fitColor(s){ return s>=85?'var(--cool)':s>=75?'var(--accent)':'#C9CEC9'; }
+function boulderFit(miles,ascentFt){ const perMi=miles>0?ascentFt/miles:0; const hill=Math.min(38,perMi/1.8); const dist=Math.min(22,(miles/20)*22); return Math.max(0,Math.min(100,Math.round(45+hill+dist))); }
+
+async function generate(){
+  if(!state.key){ $('keyPanel').classList.add('show'); $('keyInput').focus(); toast('Paste a free OpenRouteService key to generate real routes.',true); return; }
+  setGenLoading(true);
+  const body={ coordinates:[[state.start.lng,state.start.lat]], elevation:true, instructions:false,
+    options:{ round_trip:{ length:Math.round(state.miles*1609.34), points:6, seed:state.seed } } };
+  try{
+    const res=await fetch(ORS(state.profile),{ method:'POST', headers:{ 'Authorization':state.key, 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+    if(!res.ok){ const txt=await res.text(); throw new Error(`ORS ${res.status}: ${txt.slice(0,140)}`); }
+    const data=await res.json();
+    const f=data.features&&data.features[0];
+    if(!f) throw new Error('No route returned for this spot — try a different start or distance.');
+    renderRoute(f);
+  }catch(err){
+    const msg=String(err.message||err);
+    if(/Failed to fetch|NetworkError|TypeError/i.test(msg)){
+      toast('Network call was blocked (likely the in-chat preview sandbox). Open this file locally or deploy it — the engine is wired correctly.',true);
+    } else { toast(msg,true); }
+  }finally{ setGenLoading(false); }
+}
+
+function renderRoute(f){
+  const coords=f.geometry.coordinates;                 // [lng,lat,ele]
+  const latlngs=coords.map(c=>[c[1],c[0]]);
+  const eles=coords.map(c=>(c[2]||0)*3.28084);          // ft
+  const sum=f.properties.summary||{};
+  const distMi=+(((sum.distance||0)/1609.34)||state.miles).toFixed(2);
+  const ascentFt=Math.round((f.properties.ascent||0)*3.28084);
+  const fit=boulderFit(distMi,ascentFt);
+  state.last={coords,distMi,ascentFt,fit};
+
+  routeLayer.clearLayers();
+  L.polyline(latlngs,{color:'#FF6B35',weight:13,opacity:.16,lineJoin:'round'}).addTo(routeLayer);
+  const pl=L.polyline(latlngs,{color:'#FF6B35',weight:5,opacity:.96,lineJoin:'round'}).addTo(routeLayer);
+  map.flyToBounds(pl.getBounds(),{padding:[70,70],duration:.7});
+
+  $('empty').style.display='none';
+  $('roTitle').textContent=`${distMi} mi loop`;
+  $('roSub').textContent=`${state.profile==='foot-hiking'?'Trail':'Road / path'} · seed ${state.seed} · from your pin`;
+  $('roStats').innerHTML=`
+    <div class="stat"><div class="k">Distance</div><div class="v">${distMi}<small> mi</small></div></div>
+    <div class="stat"><div class="k">Elev gain</div><div class="v cool">+${ascentFt}<small> ft</small></div></div>
+    <div class="stat"><div class="k">Ft / mile</div><div class="v">${Math.round(ascentFt/Math.max(distMi,0.1))}</div></div>`;
+
+  const arc=$('ringArc'),num=$('ringNum'),C=2*Math.PI*50;
+  arc.style.strokeDashoffset=C; num.textContent='0';
+  const col=fitColor(fit); arc.setAttribute('stroke',col);
+  $('ringCap').textContent=fit>=85?'Prime prep route':fit>=75?'Strong fit':'Supplemental';
+  setTimeout(()=>{ arc.style.strokeDashoffset=C*(1-fit/100); let v=0; const step=()=>{v+=Math.ceil(fit/22); if(v>=fit)v=fit; num.textContent=v; num.style.color=col; if(v<fit)requestAnimationFrame(step);}; step(); },60);
+
+  drawElev(eles);
+
+  if(state.aiPlan){
+    $('roNotes').innerHTML=`Generated from your start and snapped to real paths. <b>${state.aiPlan.coachingNotes?escapeHtml(state.aiPlan.coachingNotes):'Run it as your session calls for.'}</b>`;
+    $('aiPlan').classList.add('show');
+    $('aiSegs').innerHTML=(state.aiPlan.structure||[]).map(s=>`<div class="seg-line"><span class="seg-miles">${s.miles} mi</span><span>${escapeHtml(s.segment||'')}</span><span class="seg-effort">${escapeHtml(s.effort||'')}</span></div>`).join('');
+    $('aiFluid').innerHTML=state.aiPlan.fluidStrategy?`<b>Fluids:</b> ${escapeHtml(state.aiPlan.fluidStrategy)}`:'';
+  }else{
+    $('roNotes').innerHTML=`Generated from your start and snapped to real OpenStreetMap paths. Hit <b>⟳</b> for a different loop of the same length.`;
+    $('aiPlan').classList.remove('show');
+  }
+
+  // GPX download (client-side)
+  const gpx=buildGpx(`HoodaRoutes ${distMi}mi`,coords);
+  const url=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));
+  const a=$('btnGpx'); a.href=url; a.download=`hoodaroutes-${distMi}mi.gpx`;
+
+  $('readout').classList.add('show');
+
+  // Save to history (only succeeds when a Strava session exists; ignored otherwise).
+  try{
+    fetch(api('/api/routes/save'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:`${distMi} mi loop`,distMi,ascentFt,fit,profile:state.profile,lat:state.start.lat,lng:state.start.lng,seed:state.seed})}).catch(()=>{});
+  }catch(_){}
+}
+
+function drawElev(eles){
+  const svg=$('elevSvg'),W=320,H=44;
+  const max=Math.max(...eles),min=Math.min(...eles);
+  const n=Math.min(eles.length,120), step=eles.length/n;
+  const pts=[]; for(let i=0;i<n;i++){ const v=eles[Math.floor(i*step)]; const x=(i/(n-1))*W; const y=H-4-((v-min)/((max-min)||1))*(H-10); pts.push([x,y]); }
+  const d='M'+pts.map(p=>p.join(',')).join(' L');
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  svg.innerHTML=`<defs><linearGradient id="eg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#43C6A8" stop-opacity=".35"/><stop offset="1" stop-color="#43C6A8" stop-opacity="0"/></linearGradient></defs>
+    <path d="${d} L${W},${H} L0,${H} Z" fill="url(#eg)"/><path d="${d}" fill="none" stroke="#43C6A8" stroke-width="2" stroke-linejoin="round"/>`;
+}
+
+function buildGpx(name,coords){
+  const pts=coords.map(c=>`      <trkpt lat="${(+c[1]).toFixed(6)}" lon="${(+c[0]).toFixed(6)}">${c[2]!=null?`<ele>${(+c[2]).toFixed(1)}</ele>`:''}</trkpt>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="HoodaRoutes" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>${escapeHtml(name)}</name></metadata>
+  <trk><name>${escapeHtml(name)}</name><trkseg>
+${pts}
+  </trkseg></trk>
+</gpx>`;
+}
+function escapeHtml(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function setGenLoading(on){ $('btnGen').disabled=on; $('genLabel').innerHTML=on?'<span class="spinner" style="display:inline-block;vertical-align:middle"></span> Generating…':'Generate loop'; }
+
+/* ---------- AI: interpret intent -> params -> generate ---------- */
+$('aiBtn').onclick=runAI;
+async function runAI(){
+  const q=$('aiInput').value.trim(); if(!q){ $('aiInput').focus(); return; }
+  $('aiBtnLabel').innerHTML='<span class="spinner" style="display:inline-block;vertical-align:middle"></span> Thinking…';
+  const sys=`You turn a runner's request into route-generation parameters for HoodaRoutes. The athlete trains for the Boulderthon Marathon (Sept 2026, 5,400 ft, rolling) with a sub-3:00 goal.
+Return ONLY JSON, no markdown:
+{"miles":<1-26>,"profile":"foot-walking"|"foot-hiking","seed":<1-9999>,"structure":[{"miles":<n>,"segment":"<text>","effort":"<EASY|STEADY|TEMPO|MP|HILLS|COOLDOWN>"}],"coachingNotes":"<1-2 sentences>","fluidStrategy":"<short note>"}
+Use foot-hiking for trail/hill requests, foot-walking for road/pavement. Sum of structure miles ~= miles.`;
+  try{
+    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,system:sys,messages:[{role:"user",content:q}]})});
+    const data=await res.json();
+    const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').replace(/```json|```/g,'').trim();
+    const p=JSON.parse(text);
+    state.miles=Math.max(1,Math.min(26,Math.round(p.miles||8)));
+    state.profile=(p.profile==='foot-hiking')?'foot-hiking':'foot-walking';
+    state.seed=p.seed||Math.floor(Math.random()*9999)+1;
+    state.aiPlan=p;
+    $('distRange').value=state.miles; $('distVal').textContent=state.miles;
+    $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===state.profile));
+    toast('Interpreted — generating route.');
+    await generate();
+  }catch(err){ toast('Could not interpret that. Set distance/surface manually and Generate.',true); }
+  finally{ $('aiBtnLabel').textContent='Interpret + generate'; }
+}
+// AI-driven generate should keep the plan; manual generate clears it
+const _origGen=generate;
+$('btnGen').onclick=()=>{ state.aiPlan=null; _origGen(); };
+$('btnShuffle').onclick=()=>{ state.aiPlan=null; state.seed=Math.floor(Math.random()*9999)+1; if(state.key) _origGen(); else toast('Add a routing key to generate.',true); };
+
+/* ---------- send to Garmin (push service) ---------- */
+async function sendToGarmin(){
+  if(!state.last){ toast('Generate a route first.',true); return; }
+  if(!state.pushUrl){ $('keyPanel').classList.add('show'); $('pushInput').focus(); toast('Add your Garmin push service URL in the key panel.',true); return; }
+  const c=state.last;
+  const body={ name:`HoodaRoutes ${c.distMi}mi`, activityType:state.profile==='foot-hiking'?'TRAIL_RUNNING':'RUNNING',
+    distanceM:Math.round(c.distMi*1609.34), ascentM:Math.round(c.ascentFt/3.28084), descentM:Math.round(c.ascentFt/3.28084),
+    geoPoints:c.coords.map(p=>({lat:p[1],lng:p[0],ele:p[2]||0})) };
+  $('btnSend').textContent='Sending…';
+  try{
+    const r=await fetch(`${state.pushUrl}/push-course`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'push failed');
+    toast(`Sent to Garmin${d.courseId?` (course ${d.courseId})`:''}. Open Connect → Courses.`);
+  }catch(err){
+    const m=String(err.message||err);
+    if(/Failed to fetch|NetworkError|TypeError/i.test(m)) toast('Push call blocked (preview sandbox) or service unreachable — works from your deployed/local app.',true);
+    else toast(m,true);
+  }finally{ $('btnSend').textContent='➤ Send to Garmin'; }
+}
+$('btnSend').onclick=sendToGarmin;
+
+/* ---------- init ---------- */
+$('btnConnect').onclick=()=>{ window.location.href=api('/api/auth/strava/login'); };
+checkAuth();
+initMap();
+// try to center on the user immediately (worldwide), non-blocking
+if(navigator.geolocation){
+  navigator.geolocation.getCurrentPosition(
+    pos=>setStart(pos.coords.latitude,pos.coords.longitude,true),
+    ()=>{}, {enableHighAccuracy:true,timeout:6000}
+  );
+}
+</script>

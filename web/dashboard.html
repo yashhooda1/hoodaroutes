@@ -1,0 +1,169 @@
+<!-- HoodaRoutes — per-user dashboard. Weekly volume trend + your generated routes. -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HoodaRoutes — Your training</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#0C100F;--panel:#141A18;--panel-2:#1A221F;--raise:#212B27;--border:#283330;--border-soft:#212A27;
+    --ink:#E9EFEB;--muted:#8C9690;--muted-2:#67716C;--accent:#FF6B35;--cool:#43C6A8;--strava:#FC5200;--warn:#F0B429;
+    --mono:'Space Mono',ui-monospace,monospace;--disp:'Archivo',system-ui,sans-serif;--body:'Inter',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);min-height:100vh;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:26px 20px 60px}
+
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:26px}
+  .brand{display:flex;align-items:center;gap:11px}
+  .glyph{width:34px;height:34px;border-radius:9px;background:radial-gradient(120% 120% at 25% 20%,#FF8A5C,var(--accent) 55%,#C2511F);display:grid;place-items:center}
+  .wordmark{font-family:var(--disp);font-weight:900;font-size:18px;letter-spacing:-.02em}
+  .wordmark b{color:var(--accent)}
+  .navlink{font-family:var(--mono);font-size:11px;color:var(--muted);text-decoration:none;border:1px solid var(--border);padding:8px 12px;border-radius:9px}
+  .navlink:hover{color:var(--ink);border-color:var(--accent)}
+
+  .empty{text-align:center;padding:60px 20px}
+  .empty h2{font-family:var(--disp);font-weight:800;font-size:20px;margin-bottom:10px}
+  .empty p{color:var(--muted);font-size:13.5px;margin-bottom:18px}
+  .btn-strava{display:inline-block;background:var(--strava);color:#fff;font-family:var(--disp);font-weight:800;font-size:13.5px;text-decoration:none;padding:11px 18px;border-radius:10px}
+
+  .hi{font-family:var(--disp);font-weight:800;font-size:22px;letter-spacing:-.01em;margin-bottom:3px}
+  .hi span{color:var(--strava)}
+  .sub{font-family:var(--mono);font-size:11px;color:var(--muted-2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:22px}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+  @media (max-width:620px){ .stats{grid-template-columns:repeat(2,1fr)} }
+  .stat{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:15px}
+  .stat .v{font-family:var(--mono);font-weight:700;font-size:24px;letter-spacing:-.02em}
+  .stat .v.cool{color:var(--cool)} .stat .v.acc{color:var(--accent)}
+  .stat .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-2);margin-top:5px}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:18px}
+  .card h3{font-family:var(--disp);font-weight:800;font-size:14px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .card h3 .dot{width:7px;height:7px;border-radius:50%;background:var(--cool)}
+
+  /* volume bars */
+  .bars{display:flex;align-items:flex-end;gap:14px;height:140px;padding-top:10px}
+  .bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end}
+  .bar .col{width:100%;max-width:60px;background:linear-gradient(180deg,var(--cool),var(--cool-dim,#2C8C77));border-radius:7px 7px 0 0;min-height:4px;transition:height .6s cubic-bezier(.2,.8,.2,1)}
+  .bar.cur .col{background:linear-gradient(180deg,#FF8A5C,var(--accent))}
+  .bar .val{font-family:var(--mono);font-weight:700;font-size:12px}
+  .bar .lbl{font-family:var(--mono);font-size:9px;color:var(--muted-2);letter-spacing:.04em}
+
+  .today{display:flex;align-items:center;gap:16px;background:linear-gradient(180deg,rgba(255,107,53,.08),transparent);border:1px solid var(--border);border-radius:14px;padding:15px 17px;margin-bottom:18px}
+  .today .big{font-family:var(--mono);font-weight:700;font-size:32px;color:var(--accent);line-height:1}
+  .today .big small{font-size:13px;color:var(--muted)}
+  .today .meta .type{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#FC7A40}
+  .today .meta .why{font-size:12.5px;color:#C5CEC9;margin-top:4px;line-height:1.4}
+  .today a{margin-left:auto;font-family:var(--disp);font-weight:800;font-size:12.5px;background:var(--accent);color:#1a0f08;text-decoration:none;padding:10px 14px;border-radius:9px;white-space:nowrap}
+
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-2);padding:0 8px 9px;border-bottom:1px solid var(--border-soft)}
+  td{padding:11px 8px;border-bottom:1px solid var(--border-soft);font-size:13px}
+  td.mi{font-family:var(--mono);font-weight:700;color:var(--cool)}
+  td.fit{font-family:var(--mono);font-weight:700}
+  .surf{font-family:var(--mono);font-size:9.5px;color:var(--muted);text-transform:uppercase}
+  .when{font-family:var(--mono);font-size:10.5px;color:var(--muted-2)}
+  .none{color:var(--muted-2);font-size:12.5px;font-family:var(--mono);padding:16px 0;text-align:center}
+
+  .err{color:var(--warn);font-family:var(--mono);font-size:12px}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="glyph"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 17l5-6 3 3 4-7 6 8" stroke="#1a0f08" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="6" r="2.4" fill="#1a0f08"/></svg></div>
+      <div class="wordmark">HOODA<b>ROUTES</b></div>
+    </div>
+    <a class="navlink" href="./index.html">← Route generator</a>
+  </header>
+
+  <div id="root"><div class="sub">Loading…</div></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+// Same-origin when deployed. For local testing against a remote API, set ?api=https://yashhooda.ai
+const API=new URLSearchParams(location.search).get('api')||'';
+const api=p=>`${API}${p}`;
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load(){
+  let me;
+  try{ me=await (await fetch(api('/api/auth/me'),{credentials:'include'})).json(); }
+  catch(_){ return disconnected("Couldn't reach the API. Deploy this with the backend, or add ?api=https://yourhost."); }
+  if(!me.connected) return disconnected();
+  let prof, routes;
+  try{
+    prof=await (await fetch(api('/api/strava/profile'),{credentials:'include'})).json();
+    routes=await (await fetch(api('/api/routes/list'),{credentials:'include'})).json();
+    if(prof.error) throw new Error(prof.error);
+  }catch(err){ return render(me.athlete,null,null,String(err.message||err)); }
+  render(me.athlete,prof,routes.routes||[]);
+}
+
+function disconnected(msg){
+  $('root').innerHTML=`<div class="empty">
+    <h2>Connect Strava to see your training</h2>
+    <p>${esc(msg||'Your weekly volume, today\'s suggested run, and every route you generate — in one place.')}</p>
+    <a class="btn-strava" href="${api('/api/auth/strava/login')}">Connect Strava</a>
+  </div>`;
+}
+
+function render(athlete,prof,routes,err){
+  if(err){ $('root').innerHTML=`<div class="hi">${esc(athlete&&athlete.name||'You')}</div><div class="card"><div class="err">${esc(err)}</div></div>`; return; }
+  const s=prof.suggestion||{};
+  const weeks=(prof.weeks||[]).slice().reverse(); // oldest -> newest
+  const max=Math.max(1,...weeks);
+  const labels=['3w','2w','1w','This'];
+  const bars=weeks.map((v,i)=>`
+    <div class="bar ${i===weeks.length-1?'cur':''}">
+      <div class="val">${v}</div>
+      <div class="col" style="height:${Math.max(4,(v/max)*100)}%"></div>
+      <div class="lbl">${labels[i]||''}</div>
+    </div>`).join('');
+
+  const rows=(routes||[]).length? routes.map(r=>`
+    <tr>
+      <td class="mi">${r.distMi} mi</td>
+      <td>+${r.ascentFt} ft</td>
+      <td><span class="surf">${(r.profile||'').includes('hiking')?'Trail':'Road'}</span></td>
+      <td class="fit" style="color:${r.fit>=85?'var(--cool)':r.fit>=75?'var(--accent)':'#C9CEC9'}">${r.fit}</td>
+      <td class="when">${new Date(r.ts).toLocaleDateString()}</td>
+    </tr>`).join('') : `<tr><td colspan="5"><div class="none">No routes yet — generate one and it shows up here.</div></td></tr>`;
+
+  $('root').innerHTML=`
+    <div class="hi">Hey, <span>${esc((athlete&&athlete.name||'').split(' ')[0]||'runner')}</span></div>
+    <div class="sub">Your training · last 4 weeks</div>
+
+    <div class="stats">
+      <div class="stat"><div class="v cool">${prof.weeklyAvg||0}</div><div class="k">mi / week avg</div></div>
+      <div class="stat"><div class="v">${prof.longestMi||0}</div><div class="k">longest run</div></div>
+      <div class="stat"><div class="v">${prof.avgPaceMinMi||'—'}</div><div class="k">avg pace /mi</div></div>
+      <div class="stat"><div class="v acc">${prof.runCount||0}</div><div class="k">runs logged</div></div>
+    </div>
+
+    <div class="today">
+      <div class="big">${s.suggestedMiles||'—'}<small> mi</small></div>
+      <div class="meta">
+        <div class="type">Today · ${esc(s.type||'')}</div>
+        <div class="why">${esc(s.rationale||'')}</div>
+      </div>
+      <a href="./index.html">Generate it →</a>
+    </div>
+
+    <div class="card">
+      <h3><span class="dot"></span> Weekly volume</h3>
+      <div class="bars">${bars||'<div class="none">No runs in range.</div>'}</div>
+    </div>
+
+    <div class="card">
+      <h3><span class="dot" style="background:var(--accent)"></span> Your generated routes</h3>
+      <table><thead><tr><th>Distance</th><th>Elev</th><th>Surface</th><th>B-fit</th><th>When</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+
+load();
+</script>

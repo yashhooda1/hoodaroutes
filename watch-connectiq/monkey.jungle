@@ -1,0 +1,5 @@
+# HoodaRoutes build configuration
+project.manifest = manifest.xml
+
+# Optional: relax type checking if a newer/older SDK complains.
+# typeCheckLevel = Gradual

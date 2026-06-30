@@ -1,0 +1,8 @@
+{
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/watch", "destination": "/watch-preview.html" },
+    { "source": "/app", "destination": "/index.html" }
+  ]
+}

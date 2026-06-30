@@ -1,0 +1,219 @@
+<!-- HoodaRoutes for Garmin — FR970 UI (global: routes near the device, anywhere) -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HoodaRoutes — Garmin FR970 UI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --amoled:#000;--ink:#FFFFFF;--dim:#8E948F;--dimmer:#5C615D;
+    --accent:#FF6B35;--cool:#36D29E;--line:#1C211E;--hi:#161A18;
+    --bezel-a:#3A3D40;--bezel-b:#15171A;--bezel-c:#26292C;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:radial-gradient(120% 90% at 50% -10%,#14181b,#0a0c0d 60%,#060708);color:var(--ink);font-family:'Inter',system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;gap:26px;padding:34px 16px 50px}
+  .caption{text-align:center;max-width:520px}
+  .caption .kick{font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+  .caption h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin-top:9px}
+  .caption p{color:var(--dim);font-size:13px;line-height:1.5;margin-top:8px}
+
+  .device{position:relative;width:380px;height:380px;flex:0 0 auto}
+  @media (max-width:460px){ .device{width:330px;height:330px} }
+  .bezel{position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 210deg,var(--bezel-a),var(--bezel-b) 25%,var(--bezel-c) 50%,var(--bezel-b) 72%,var(--bezel-a));box-shadow:0 30px 70px -24px #000,inset 0 2px 3px rgba(255,255,255,.10),inset 0 -3px 6px rgba(0,0,0,.6);padding:13px}
+  .bezel::after{content:"FORERUNNER 970";position:absolute;left:0;right:0;bottom:15px;text-align:center;font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.35em;color:#6a6f73}
+  .glass{position:absolute;inset:13px;border-radius:50%;background:var(--amoled);overflow:hidden;box-shadow:inset 0 0 0 2px #0e1012,inset 0 0 40px rgba(0,0,0,.9)}
+  .screen{position:absolute;inset:0;border-radius:50%;overflow:hidden}
+  .scr{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;padding:42px 40px;opacity:0;transition:opacity .18s}
+  .scr.on{display:flex;opacity:1}
+
+  .arc-top{position:absolute;top:20px;left:0;right:0;text-align:center}
+  .arc-top .brand{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.2em;color:var(--accent);font-weight:700}
+  .arc-top .sub{font-size:9px;color:var(--dimmer);letter-spacing:.14em;margin-top:2px;font-family:'Space Mono',monospace}
+
+  /* location chip (replaces the old city toggle) */
+  .loc{display:flex;align-items:center;gap:6px;background:#0d0f0e;border:1px solid var(--line);border-radius:20px;padding:5px 12px;margin:34px 0 10px;font-family:'Space Mono',monospace;font-size:9.5px;letter-spacing:.06em;color:var(--cool)}
+  .loc .ring{width:7px;height:7px;border-radius:50%;background:var(--cool);box-shadow:0 0 0 3px rgba(54,210,158,.22)}
+  .loc b{color:var(--ink);font-weight:700}
+
+  .rows{width:100%;display:flex;flex-direction:column;gap:5px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 13px;border-radius:13px;cursor:pointer;border:1px solid transparent;transition:.12s}
+  .row.sel{background:var(--hi);border-color:#2a302c}
+  .row.sel .rn{color:var(--ink)}
+  .rn{font-size:13px;font-weight:600;color:var(--dim);line-height:1.15}
+  .rmiles{font-family:'Space Mono',monospace;font-size:9px;color:var(--dimmer);margin-top:2px;letter-spacing:.04em}
+  .fit{display:flex;flex-direction:column;align-items:center;flex:0 0 auto}
+  .fit b{font-family:'Space Mono',monospace;font-weight:700;font-size:16px;line-height:1}
+  .fit small{font-size:6.5px;letter-spacing:.14em;color:var(--dimmer);margin-top:1px}
+  .scrollhint{margin-top:8px;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.14em;color:var(--dimmer)}
+
+  .d-name{font-size:14px;font-weight:700;text-align:center;line-height:1.2;color:var(--ink);margin-top:8px}
+  .d-area{font-family:'Space Mono',monospace;font-size:8.5px;letter-spacing:.1em;color:var(--dimmer);text-transform:uppercase;margin-top:4px}
+  .d-big{font-family:'Space Mono',monospace;font-weight:700;font-size:64px;line-height:.9;letter-spacing:-.03em;margin:14px 0 2px}
+  .d-big span{font-size:18px;color:var(--dim);margin-left:3px}
+  .d-strip{display:flex;margin-top:4px}
+  .d-cell{padding:0 13px;text-align:center;border-right:1px solid var(--line)}
+  .d-cell:last-child{border-right:0}
+  .d-cell .v{font-family:'Space Mono',monospace;font-weight:700;font-size:14px}
+  .d-cell .v.cool{color:var(--cool)}
+  .d-cell .v.acc{color:var(--accent)}
+  .d-cell .k{font-size:7px;letter-spacing:.12em;color:var(--dimmer);text-transform:uppercase;margin-top:3px}
+  .d-start{margin-top:auto;display:flex;align-items:center;gap:8px;font-family:'Space Mono',monospace;font-weight:700;font-size:13px;color:var(--cool);letter-spacing:.05em}
+
+  .nav-canvas{position:relative;width:170px;height:150px;margin-top:8px}
+  .nav-canvas svg{position:absolute;inset:0}
+  .nav-go{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.16em;color:var(--cool);text-transform:uppercase;margin-top:8px}
+  .nav-cue{font-size:12px;color:var(--dim);text-align:center;margin-top:6px;line-height:1.35}
+  .nav-cue b{color:var(--ink)}
+  .nav-sync{display:flex;align-items:center;gap:7px;margin-top:auto;font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--accent)}
+  .check{width:12px;height:12px;border-radius:50%;background:var(--cool);display:inline-grid;place-items:center}
+  .check svg{width:8px;height:8px}
+
+  .btn{position:absolute;background:linear-gradient(180deg,#3a3e41,#202326);border:1px solid #101214;cursor:pointer;box-shadow:0 4px 10px -3px #000,inset 0 1px 1px rgba(255,255,255,.12);transition:.1s}
+  .btn:active{transform:scale(.94);filter:brightness(1.2)}
+  .btn.left{width:13px;height:34px;border-radius:5px 0 0 5px;left:-6px}
+  .btn.right{width:13px;height:38px;border-radius:0 5px 5px 0;right:-6px}
+  .btn .lbl{position:absolute;white-space:nowrap;font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.08em;color:var(--dimmer);top:50%;transform:translateY(-50%)}
+  .btn.left .lbl{right:20px}
+  .btn.right .lbl{left:20px}
+  .btn.right.primary{background:linear-gradient(180deg,#FF7A47,#C2451A);border-color:#7a2e10}
+  .btn.right.primary .lbl{color:var(--accent);font-weight:700}
+  #bL1{top:118px}#bL2{top:172px}#bL3{top:226px}#bR1{top:140px}#bR2{top:206px}
+
+  .legend{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;max-width:420px}
+  .legend div{font-family:'Space Mono',monospace;font-size:10px;color:var(--dim)}
+  .legend b{color:var(--accent)}
+  .footnote{font-family:'Space Mono',monospace;font-size:10px;color:var(--dimmer);text-align:center;max-width:480px;line-height:1.6}
+</style>
+
+<div class="caption">
+  <div class="kick">◆ HoodaRoutes · Connect IQ</div>
+  <h1>Watch-native UI — routes near you, anywhere</h1>
+  <p>The FR970 reads your GPS and generates real loops wherever you are. No cities — global. Use the buttons or arrow keys.</p>
+</div>
+
+<div class="device" id="device">
+  <div class="bezel"><div class="glass"><div class="screen">
+
+    <div class="scr on" id="scrList">
+      <div class="arc-top"><div class="brand">HOODAROUTES</div><div class="sub">PICK A ROUTE</div></div>
+      <div class="loc"><span class="ring"></span> ◎ NEAR YOU · <b id="locName">GPS LOCK</b></div>
+      <div class="rows" id="rows"></div>
+      <div class="scrollhint">▲ UP · DOWN ▼ · START ●</div>
+    </div>
+
+    <div class="scr" id="scrDetail">
+      <div class="arc-top"><div class="brand">ROUTE</div></div>
+      <div class="d-name" id="dName"></div>
+      <div class="d-area" id="dArea"></div>
+      <div class="d-big" id="dBig">0.0<span>MI</span></div>
+      <div class="d-strip">
+        <div class="d-cell"><div class="v cool" id="dElev">+0</div><div class="k">ft gain</div></div>
+        <div class="d-cell"><div class="v" id="dSurf">—</div><div class="k">surface</div></div>
+        <div class="d-cell"><div class="v acc" id="dFit">0</div><div class="k">B-fit</div></div>
+      </div>
+      <div class="d-start">▶ START — push to Garmin</div>
+    </div>
+
+    <div class="scr" id="scrNav">
+      <div class="arc-top"><div class="brand" style="color:var(--cool)">PUSHED</div></div>
+      <div class="nav-canvas"><svg viewBox="0 0 170 150" id="navSvg"></svg></div>
+      <div class="nav-go" id="navGo">0.0 MI LOOP</div>
+      <div class="nav-cue" id="navCue"></div>
+      <div class="nav-sync"><span class="check"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#000" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Course on your Garmin</div>
+    </div>
+
+  </div></div></div>
+
+  <button class="btn left"  id="bL1"><span class="lbl">LIGHT</span></button>
+  <button class="btn left"  id="bL2"><span class="lbl">UP</span></button>
+  <button class="btn left"  id="bL3"><span class="lbl">DOWN</span></button>
+  <button class="btn right primary" id="bR1"><span class="lbl">START</span></button>
+  <button class="btn right" id="bR2"><span class="lbl">BACK</span></button>
+</div>
+
+<div class="legend">
+  <div><b>UP / DOWN</b> scroll</div>
+  <div><b>START</b> select / push</div>
+  <div><b>BACK</b> previous</div>
+</div>
+<div class="footnote">
+  Loops are generated from your live GPS position via OpenRouteService, then pushed to Garmin Connect as a Course.<br>
+  Navigate it natively on the 970 — turn-by-turn + off-route alerts.
+</div>
+
+<script>
+// Generated loop options near the device (what /api/garmin/routes returns).
+const NEARBY = [
+  {id:'today',  name:'Today · RECOVERY',surf:'ROAD',  miles:6.1, elev:90,  fit:74, path:'oval'},
+  {id:'steady', name:'Steady loop',  surf:'ROAD',  miles:8.1, elev:120, fit:78, path:'wave'},
+  {id:'long',   name:'Long loop',    surf:'ROAD',  miles:12.7,elev:190, fit:86, path:'oval'},
+  {id:'trail',  name:'Trail loop',   surf:'TRAIL', miles:8.3, elev:240, fit:88, path:'wave'},
+  {id:'easy',   name:'Easy loop',    surf:'ROAD',  miles:5.0, elev:70,  fit:70, path:'oval'},
+];
+
+let idx=0, screen='list', current=null;
+const $=id=>document.getElementById(id);
+function fitColor(f){ return f>=85?'var(--cool)':f>=75?'var(--accent)':'#C9CEC9'; }
+
+function renderList(){
+  const rows=$('rows'); rows.innerHTML='';
+  const start=Math.max(0,Math.min(idx-1,NEARBY.length-4));
+  NEARBY.slice(start,start+4).forEach((r,i)=>{
+    const real=start+i;
+    const el=document.createElement('div');
+    el.className='row'+(real===idx?' sel':'');
+    el.innerHTML=`<div><div class="rn">${r.name}</div><div class="rmiles">${r.miles} MI · +${r.elev} FT · ${r.surf}</div></div>
+      <div class="fit"><b style="color:${fitColor(r.fit)}">${r.fit}</b><small>B-FIT</small></div>`;
+    el.onclick=()=>{ idx=real; renderList(); openDetail(); };
+    rows.appendChild(el);
+  });
+}
+function showScreen(s){ screen=s; ['List','Detail','Nav'].forEach(n=>$('scr'+n).classList.toggle('on',n.toLowerCase()===s)); }
+function openDetail(){
+  current=NEARBY[idx];
+  $('dName').textContent=current.name;
+  $('dArea').textContent='GENERATED · NEAR YOU';
+  $('dBig').innerHTML=`${current.miles}<span>MI</span>`;
+  $('dElev').textContent='+'+current.elev;
+  $('dSurf').textContent=current.surf;
+  $('dFit').textContent=current.fit; $('dFit').style.color=fitColor(current.fit);
+  showScreen('detail');
+}
+function openNav(){
+  drawNav(current.path);
+  $('navGo').textContent=current.miles+' MI LOOP';
+  $('navCue').innerHTML=`<b>${current.name}</b> created.<br>Open Navigate → Courses.`;
+  showScreen('nav');
+}
+function drawNav(shape){
+  const paths={
+    oval:'M85 18 C40 18 22 55 30 85 C38 120 70 138 100 130 C140 120 150 70 130 42 C118 26 102 18 85 18 Z',
+    wave:'M26 120 C52 122 56 84 84 84 C112 84 116 46 144 40'
+  };
+  const d=paths[shape]||paths.wave;
+  $('navSvg').innerHTML=`
+    <path d="${d}" fill="none" stroke="#1e2421" stroke-width="9" stroke-linecap="round"/>
+    <path d="${d}" fill="none" stroke="var(--accent)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="6 7"/>
+    <circle cx="${shape==='oval'?85:28}" cy="${shape==='oval'?18:120}" r="6" fill="var(--cool)" stroke="#000" stroke-width="2"/>`;
+}
+
+function up(){ if(screen!=='list')return; idx=(idx-1+NEARBY.length)%NEARBY.length; renderList(); }
+function down(){ if(screen!=='list')return; idx=(idx+1)%NEARBY.length; renderList(); }
+function start(){ if(screen==='list')openDetail(); else if(screen==='detail')openNav(); }
+function back(){ if(screen==='nav')showScreen('detail'); else if(screen==='detail')showScreen('list'); }
+$('bL2').onclick=up;$('bL3').onclick=down;$('bR1').onclick=start;$('bR2').onclick=back;
+$('bL1').onclick=()=>$('device').animate([{filter:'brightness(1)'},{filter:'brightness(1.6)'},{filter:'brightness(1)'}],{duration:280});
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowUp'){up();e.preventDefault();}
+  if(e.key==='ArrowDown'){down();e.preventDefault();}
+  if(e.key==='Enter'||e.key===' '){start();e.preventDefault();}
+  if(e.key==='Backspace'||e.key==='Escape'){back();e.preventDefault();}
+});
+
+// simulate a GPS fix resolving to a place label
+setTimeout(()=>{ $('locName').textContent='LAT 29.74, LON -95.37'; }, 900);
+renderList();
+</script>

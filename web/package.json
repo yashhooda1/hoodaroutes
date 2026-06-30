@@ -1,0 +1,7 @@
+{
+  "name": "hoodaroutes-web",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "HoodaRoutes — worldwide route generation + Strava-personalized training"
+}
