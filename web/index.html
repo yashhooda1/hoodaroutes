@@ -181,8 +181,8 @@
         <div class="keypanel" id="keyPanel">
           <p>Routes are generated live by <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noreferrer">OpenRouteService</a> — powered server-side, no key needed.</p>
           <input id="keyInput" type="password" placeholder="OpenRouteService API key (optional override)" autocomplete="off" style="display:none" />
-          <p style="margin-top:11px">Optional: your <b>Garmin push service</b> URL (the FastAPI service) to send routes straight to Garmin Connect.</p>
-          <input id="pushInput" type="text" placeholder="https://your-garmin-push.up.railway.app" autocomplete="off" />
+          <p style="margin-top:11px">Your <b>Garmin push service</b> is built in — generate a route and hit <b>Send to Garmin</b>, no setup needed.</p>
+          <input id="pushInput" type="text" placeholder="https://your-garmin-push.up.railway.app" autocomplete="off" style="display:none" />
           <p style="margin-top:11px">Optional: your <b>HoodaRoutes API base</b> (for the Strava suggestion), e.g. https://yashhooda.ai</p>
           <input id="apiInput" type="text" placeholder="https://yashhooda.ai" autocomplete="off" />
         </div>
@@ -536,21 +536,18 @@ $('btnShuffle').onclick=()=>{ state.aiPlan=null; state.seed=Math.floor(Math.rand
 /* ---------- send to Garmin (push service) ---------- */
 async function sendToGarmin(){
   if(!state.last){ toast('Generate a route first.',true); return; }
-  if(!state.pushUrl){ $('keyPanel').classList.add('show'); $('pushInput').focus(); toast('Add your Garmin push service URL in the key panel.',true); return; }
   const c=state.last;
   const body={ name:`HoodaRoutes ${c.distMi}mi`, activityType:state.profile==='foot-hiking'?'TRAIL_RUNNING':'RUNNING',
     distanceM:Math.round(c.distMi*1609.34), ascentM:Math.round(c.ascentFt/3.28084), descentM:Math.round(c.ascentFt/3.28084),
     geoPoints:c.coords.map(p=>({lat:p[1],lng:p[0],ele:p[2]||0})) };
   $('btnSend').textContent='Sending…';
   try{
-    const r=await fetch(`${state.pushUrl}/push-course`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const r=await fetch(api('/api/garmin/push'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'push failed');
+    if(!r.ok) throw new Error(d.error||d.detail||'push failed');
     toast(`Sent to Garmin${d.courseId?` (course ${d.courseId})`:''}. Open Connect → Courses.`);
   }catch(err){
-    const m=String(err.message||err);
-    if(/Failed to fetch|NetworkError|TypeError/i.test(m)) toast('Push call blocked (preview sandbox) or service unreachable — works from your deployed/local app.',true);
-    else toast(m,true);
+    toast(String(err.message||err),true);
   }finally{ $('btnSend').textContent='➤ Send to Garmin'; }
 }
 $('btnSend').onclick=sendToGarmin;
