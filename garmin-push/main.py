@@ -94,7 +94,8 @@ def push_course(req: CourseReq):
     }
 
     try:
-        # Authenticated POST through garth (python-garminconnect's session).
+        # Authenticated POST through python-garminconnect's session. Different
+        # versions expose the auth client as g.garth or g.client, so resolve it.
         #
         # ⚠️ VERIFY ONCE: connect.garmin.com's web course-service is not officially
         # documented. The payload above matches Garmin's published Courses-API
@@ -102,14 +103,12 @@ def push_course(req: CourseReq):
         # Garmin Connect in Chrome, create a course, capture the POST in DevTools,
         # and align the field names here. (See README for the official partner
         # Courses API, which uses exactly this schema.)
-        resp = g.garth.post(
-            "connectapi", "/course-service/course", json=payload, api=True
-        )
+        sess = getattr(g, "garth", None) or getattr(g, "client", None)
+        if sess is None:
+            raise RuntimeError("No auth session (garth/client) found on this version")
+        resp = sess.post("connectapi", "/course-service/course", json=payload, api=True)
         data = resp.json() if hasattr(resp, "json") else resp
         course_id = data.get("courseId") if isinstance(data, dict) else None
         return {"ok": True, "courseId": course_id}
     except Exception as e:
-        # Reliable fallback so the route at least lands in the account:
-        # write a GPX and upload it (appears under Activities; not a navigable
-        # course, but proves auth + connectivity). Enable if you want it.
         raise HTTPException(status_code=502, detail=f"Garmin course push failed: {e}")
