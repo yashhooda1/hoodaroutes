@@ -179,8 +179,8 @@
       <div class="rail-scroll">
 
         <div class="keypanel" id="keyPanel">
-          <p>Routes are generated live by <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noreferrer">OpenRouteService</a> (free, 2k/day). Paste a key to generate here. It stays in memory only — never saved.</p>
-          <input id="keyInput" type="password" placeholder="OpenRouteService API key" autocomplete="off" />
+          <p>Routes are generated live by <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noreferrer">OpenRouteService</a> — powered server-side, no key needed.</p>
+          <input id="keyInput" type="password" placeholder="OpenRouteService API key (optional override)" autocomplete="off" style="display:none" />
           <p style="margin-top:11px">Optional: your <b>Garmin push service</b> URL (the FastAPI service) to send routes straight to Garmin Connect.</p>
           <input id="pushInput" type="text" placeholder="https://your-garmin-push.up.railway.app" autocomplete="off" />
           <p style="margin-top:11px">Optional: your <b>HoodaRoutes API base</b> (for the Strava suggestion), e.g. https://yashhooda.ai</p>
@@ -388,13 +388,12 @@ async function generateMine(){
   state.profile=(p.trailShare>0.4)?'foot-hiking':'foot-walking';
   $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===state.profile));
   state.aiPlan=null;
-  if(!state.key){ $('keyPanel').classList.add('show'); $('keyInput').focus(); toast(`Today: ${s.rationale||'your run'} — add a routing key to draw it.`,true); return; }
   toast(`Today: ${s.type} ${s.suggestedMiles} mi — generating from your training.`);
   generate();
 }
 $('distRange').oninput=e=>{ state.miles=+e.target.value; $('distVal').textContent=e.target.value; };
 $('surfSeg').onclick=e=>{ const b=e.target.closest('button'); if(!b)return; state.profile=b.dataset.p; $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); };
-$('btnShuffle').onclick=()=>{ state.seed=Math.floor(Math.random()*9999)+1; if(state.key) generate(); else toast('Add a routing key to generate.',true); };
+$('btnShuffle').onclick=()=>{ state.seed=Math.floor(Math.random()*9999)+1; generate(); };
 $('btnGen').onclick=()=>generate();
 $('roClose').onclick=()=>{ $('readout').classList.remove('show'); $('empty').style.display='flex'; routeLayer.clearLayers(); };
 
@@ -406,16 +405,15 @@ function fitColor(s){ return s>=85?'var(--cool)':s>=75?'var(--accent)':'#C9CEC9'
 function boulderFit(miles,ascentFt){ const perMi=miles>0?ascentFt/miles:0; const hill=Math.min(38,perMi/1.8); const dist=Math.min(22,(miles/20)*22); return Math.max(0,Math.min(100,Math.round(45+hill+dist))); }
 
 async function generate(){
-  if(!state.key){ $('keyPanel').classList.add('show'); $('keyInput').focus(); toast('Paste a free OpenRouteService key to generate real routes.',true); return; }
   setGenLoading(true);
   const body={ coordinates:[[state.start.lng,state.start.lat]], elevation:true, instructions:false,
     options:{ round_trip:{ length:Math.round(state.miles*1609.34), points:6, seed:state.seed } } };
   try{
-    const res=await fetch(ORS(state.profile),{ method:'POST', headers:{ 'Authorization':state.key, 'Content-Type':'application/json' }, body:JSON.stringify(body) });
-    if(!res.ok){ const txt=await res.text(); throw new Error(`ORS ${res.status}: ${txt.slice(0,140)}`); }
+    const res=await fetch(api('/api/routes/generate'),{ method:'POST', credentials:'include', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ lat:state.start.lat, lng:state.start.lng, miles:state.miles, profile:state.profile, seed:state.seed }) });
     const data=await res.json();
-    const f=data.features&&data.features[0];
-    if(!f) throw new Error('No route returned for this spot — try a different start or distance.');
+    if(!res.ok||data.error) throw new Error(data.error||`Server ${res.status}`);
+    if(!data.coordinates||!data.coordinates.length) throw new Error('No route returned for this spot — try a different start or distance.');
+    const f={ geometry:{ coordinates:data.coordinates }, properties:{ summary:{ distance:(data.distanceMi||state.miles)*1609.34 }, ascent:(data.ascentFt||0)/3.28084, descent:(data.descentFt||0)/3.28084 } };
     renderRoute(f);
   }catch(err){
     const msg=String(err.message||err);
@@ -533,7 +531,7 @@ Use foot-hiking for trail/hill requests, foot-walking for road/pavement. Sum of 
 // AI-driven generate should keep the plan; manual generate clears it
 const _origGen=generate;
 $('btnGen').onclick=()=>{ state.aiPlan=null; _origGen(); };
-$('btnShuffle').onclick=()=>{ state.aiPlan=null; state.seed=Math.floor(Math.random()*9999)+1; if(state.key) _origGen(); else toast('Add a routing key to generate.',true); };
+$('btnShuffle').onclick=()=>{ state.aiPlan=null; state.seed=Math.floor(Math.random()*9999)+1; _origGen(); };
 
 /* ---------- send to Garmin (push service) ---------- */
 async function sendToGarmin(){
