@@ -22,9 +22,11 @@ export default async function handler(req, res) {
       if (e.object_type === "activity") {
         // create | update | delete -> recompute on next read
         await kvDel(`profile:${e.owner_id}`);
+        await kvDel(`ai-suggest:${e.owner_id}`);
       } else if (e.object_type === "athlete" && e.updates && e.updates.authorized === "false") {
         await kvDel(`user:${e.owner_id}`);
         await kvDel(`profile:${e.owner_id}`);
+        await kvDel(`ai-suggest:${e.owner_id}`);
       }
     } catch (_) { /* never block the ack */ }
     return res.status(200).json({ ok: true }); // Strava needs a fast 200
