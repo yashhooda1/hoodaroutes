@@ -41,7 +41,7 @@ export default async function handler(req, res) {
           name: `${s.label} ${v.distanceMi} mi`,
           miles: v.distanceMi,
           elevFt: v.ascentFt,
-          shade: s.profile === "foot-hiking" ? "trail" : "road",
+          shade: v.surface,   // detected: road | trail | track | mixed
           boulderFit: v.boulderFit,
           lat, lng,
           profile: s.profile,
@@ -62,7 +62,7 @@ export default async function handler(req, res) {
           name: `Today ${v.distanceMi} mi · ${s.type}`,
           miles: v.distanceMi,
           elevFt: v.ascentFt,
-          shade: "road",
+          shade: v.surface,
           boulderFit: v.boulderFit,
           lat, lng,
           profile: "foot-walking",
