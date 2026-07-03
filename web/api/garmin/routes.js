@@ -7,10 +7,14 @@ import { generateLoop } from "../../lib/ors.js";
 import { stravaAccessTokenEnv, recentRuns, suggestToday } from "../../lib/strava.js";
 
 const SPECS = [
-  { label: "Easy",   miles: 5,  profile: "foot-walking", seed: 11 },
-  { label: "Steady", miles: 8,  profile: "foot-walking", seed: 22 },
-  { label: "Long",   miles: 13, profile: "foot-walking", seed: 33 },
-  { label: "Trail",  miles: 8,  profile: "foot-hiking",  seed: 44 },
+  { label: "Recovery",   miles: 3,  profile: "foot-walking", seed: 5  },
+  { label: "Easy",       miles: 5,  profile: "foot-walking", seed: 11 },
+  { label: "Tempo",      miles: 6,  profile: "foot-walking", seed: 17 },
+  { label: "Steady",     miles: 8,  profile: "foot-walking", seed: 22 },
+  { label: "Long",       miles: 13, profile: "foot-walking", seed: 33 },
+  { label: "Marathon",   miles: 18, profile: "foot-walking", seed: 39 },
+  { label: "Trail",      miles: 8,  profile: "foot-hiking",  seed: 44 },
+  { label: "Trail Long", miles: 12, profile: "foot-hiking",  seed: 51 },
 ];
 
 export default async function handler(req, res) {
