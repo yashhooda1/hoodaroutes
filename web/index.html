@@ -382,13 +382,24 @@ async function disconnect(){
 }
 async function generateMine(){
   if(!_profile){ toast('Connect Strava first.',true); return; }
-  const p=_profile, s=p.suggestion||{};
+  const p=_profile;
   if(p.startLat&&p.startLng) setStart(p.startLat,p.startLng,true);
-  state.miles=s.suggestedMiles||8; $('distRange').value=state.miles; $('distVal').textContent=state.miles;
-  state.profile=(p.trailShare>0.4)?'foot-hiking':'foot-walking';
-  $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===state.profile));
   state.aiPlan=null;
-  toast(`Today: ${s.type} ${s.suggestedMiles} mi — generating from your training.`);
+  $('btnMine') && ($('btnMine').textContent='Coaching…');
+  // Ask the AI coach (server-side). Falls back to the heuristic suggestion
+  // automatically if the AI is unavailable — the endpoint guarantees a valid
+  // answer either way, so we never block the run.
+  let s=p.suggestion||{};
+  try{
+    const r=await fetch(api('/api/routes/ai-suggest'),{credentials:'include'});
+    if(r.ok){ const d=await r.json(); if(d&&d.suggestedMiles) s=d; }
+  }catch(_){ /* keep heuristic s */ }
+  finally{ $('btnMine') && ($('btnMine').textContent='Generate my run'); }
+  state.miles=s.suggestedMiles||8; $('distRange').value=state.miles; $('distVal').textContent=state.miles;
+  state.profile=(s.surface==='trail'||s.surface==='track'||p.trailShare>0.4)?'foot-hiking':'foot-walking';
+  $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===state.profile));
+  const note=s.coachingNotes||s.rationale||'';
+  toast(`Today: ${s.type} ${s.suggestedMiles} mi${note?' — '+note:''}`);
   generate();
 }
 $('distRange').oninput=e=>{ state.miles=+e.target.value; $('distVal').textContent=e.target.value; };
