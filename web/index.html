@@ -119,14 +119,14 @@
   .empty p{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;color:var(--muted-2);max-width:280px;line-height:1.6}
 
   /* readout */
-  .readout{position:absolute;left:18px;right:18px;bottom:18px;z-index:500;background:rgba(16,21,19,.93);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 20px 50px -20px #000;display:none}
-  .readout.show{display:block;animation:rise2 .3s ease}
+  .readout{position:absolute;left:auto;right:18px;bottom:18px;width:370px;max-width:calc(100% - 36px);max-height:calc(100% - 36px);z-index:500;background:rgba(16,21,19,.95);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 20px 50px -20px #000;display:none;flex-direction:column}
+  .readout.show{display:flex;animation:rise2 .3s ease}
   @keyframes rise2{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-  @media (max-width:920px){ .readout{position:relative;left:0;right:0;bottom:0;border-radius:0;border-left:0;border-right:0} }
-  .ro-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:14px 18px 12px;border-bottom:1px solid var(--border-soft)}
-  .ro-title{font-family:var(--disp);font-weight:800;font-size:18px;letter-spacing:-.01em}
-  .ro-sub{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
-  .ro-close{background:var(--panel-2);border:1px solid var(--border);color:var(--muted);width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:15px;flex:0 0 auto}
+  @media (max-width:920px){ .readout{position:relative;left:0;right:0;bottom:0;width:auto;max-width:none;max-height:none;border-radius:0;border-left:0;border-right:0} }
+  .ro-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:11px 13px 10px;border-bottom:1px solid var(--border-soft);flex:0 0 auto}
+  .ro-title{font-family:var(--disp);font-weight:800;font-size:15.5px;letter-spacing:-.01em}
+  .ro-sub{font-family:var(--mono);font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
+  .ro-close{background:var(--panel-2);border:1px solid var(--border);color:var(--muted);width:24px;height:24px;border-radius:7px;cursor:pointer;font-size:14px;line-height:1;flex:0 0 auto;padding:0}
   .ro-close:hover{color:var(--ink)}
   .ro-btns{display:flex;gap:7px;flex:0 0 auto;align-items:center}
 
@@ -140,37 +140,40 @@
   .readout.min .ro-mini{display:flex;flex-wrap:wrap}
   .ro-mini b{color:var(--ink);font-weight:700;font-size:13px}
   .ro-mini .fitv{color:var(--accent)}
-  .ro-body{display:grid;grid-template-columns:1fr 188px;gap:0}
+  .ro-body{display:grid;grid-template-columns:1fr 104px;gap:0;overflow-y:auto;min-height:0;flex:1 1 auto;overscroll-behavior:contain}
+  .ro-body::-webkit-scrollbar{width:8px}
+  .ro-body::-webkit-scrollbar-thumb{background:var(--raise);border-radius:8px;border:2px solid var(--panel)}
   @media (max-width:680px){ .ro-body{grid-template-columns:1fr} }
   .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-soft)}
-  .stat{background:var(--panel);padding:12px 14px}
-  .stat .k{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted-2)}
-  .stat .v{font-family:var(--mono);font-weight:700;font-size:16px;margin-top:5px}
+  .stat{background:var(--panel);padding:8px 9px}
+  .stat .k{font-family:var(--mono);font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-2)}
+  .stat .v{font-family:var(--mono);font-weight:700;font-size:13.5px;margin-top:3px}
   .stat .v.cool{color:var(--cool)}
   .stat .v small{font-size:10px;color:var(--muted);font-weight:400}
-  .ro-detail{background:var(--panel);padding:13px 16px 14px;grid-column:1/-1;border-top:1px solid var(--border-soft);display:flex;flex-direction:column;gap:11px}
+  .ro-detail{background:var(--panel);padding:10px 13px 12px;grid-column:1/-1;border-top:1px solid var(--border-soft);display:flex;flex-direction:column;gap:9px}
   .elev-svg{width:100%}
-  .notes{font-size:12.5px;line-height:1.5;color:#C5CEC9}
+  .notes{font-size:11.5px;line-height:1.45;color:#C5CEC9}
   .notes b{color:var(--ink)}
   .ro-cta{display:flex;gap:8px;flex-wrap:wrap}
-  .btn-gpx{font-family:var(--disp);font-weight:800;font-size:12.5px;background:var(--cool);color:#06120e;border:0;border-radius:9px;padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:7px;text-decoration:none}
+  .btn-gpx{font-family:var(--disp);font-weight:800;font-size:11.5px;background:var(--cool);color:#06120e;border:0;border-radius:8px;padding:8px 11px;cursor:pointer;display:flex;align-items:center;gap:6px;text-decoration:none}
   .btn-gpx:hover{filter:brightness(1.07)}
-  .send-note{font-family:var(--mono);font-size:10px;color:var(--muted-2);align-self:center;line-height:1.4}
-  .bring{background:var(--panel);padding:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border-left:1px solid var(--border-soft)}
+  .send-note{display:none}
+  .bring{background:var(--panel);padding:8px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;border-left:1px solid var(--border-soft)}
   @media (max-width:680px){ .bring{border-left:0;border-top:1px solid var(--border-soft)} }
-  .ring-wrap{position:relative;width:118px;height:118px}
+  .ring-wrap{position:relative;width:76px;height:76px}
+  .ring-wrap svg{width:100%;height:100%;display:block}
   .ring-val{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-  .ring-num{font-family:var(--mono);font-weight:700;font-size:30px;line-height:1;letter-spacing:-.02em}
-  .ring-lbl{font-family:var(--mono);font-size:8px;letter-spacing:.1em;color:var(--muted-2);text-transform:uppercase;margin-top:3px;text-align:center}
+  .ring-num{font-family:var(--mono);font-weight:700;font-size:21px;line-height:1;letter-spacing:-.02em}
+  .ring-lbl{font-family:var(--mono);font-size:6.5px;letter-spacing:.08em;color:var(--muted-2);text-transform:uppercase;margin-top:2px;text-align:center;line-height:1.25}
   .bring-cap{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;text-align:center}
-  .ai-plan{background:linear-gradient(180deg,rgba(255,107,53,.07),transparent);border-top:1px solid var(--border-soft);padding:13px 16px 14px;grid-column:1/-1;display:none}
+  .ai-plan{background:linear-gradient(180deg,rgba(255,107,53,.07),transparent);border-top:1px solid var(--border-soft);padding:10px 13px 12px;grid-column:1/-1;display:none}
   .ai-plan.show{display:block}
   .ai-plan .lab{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:9px}
-  .seg-line{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--border-soft);font-size:12px}
+  .seg-line{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed var(--border-soft);font-size:11px;line-height:1.35}
   .seg-line:last-child{border-bottom:0}
-  .seg-miles{font-family:var(--mono);font-weight:700;color:var(--cool);min-width:54px}
+  .seg-miles{font-family:var(--mono);font-weight:700;color:var(--cool);min-width:40px;flex:0 0 auto}
   .seg-effort{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-2);margin-left:auto;border:1px solid var(--border);border-radius:5px;padding:2px 6px}
-  .ai-fluid{font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.45}
+  .ai-fluid{font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.4}
   .ai-fluid b{color:var(--cool)}
 
   .foot{padding:10px 18px;border-top:1px solid var(--border-soft);font-family:var(--mono);font-size:9.5px;color:var(--muted-2);letter-spacing:.04em;line-height:1.5}
@@ -298,12 +301,12 @@
             <div class="bring-cap" id="ringCap"></div>
           </div>
           <div class="ro-detail">
-            <svg class="elev-svg" id="elevSvg" height="44" preserveAspectRatio="none"></svg>
+            <svg class="elev-svg" id="elevSvg" height="34" preserveAspectRatio="none"></svg>
             <div class="notes" id="roNotes"></div>
             <div class="ro-cta">
-              <a class="btn-gpx" id="btnGpx" download="hoodaroutes.gpx">↓ Download GPX</a>
-              <button class="btn-gpx" id="btnSend" style="background:var(--accent);color:#1a0f08">➤ Send to Garmin</button>
-              <span class="send-note">GPX imports to Garmin Connect → Courses. Send pushes it straight to your account (needs the push service).</span>
+              <a class="btn-gpx" id="btnGpx" download="hoodaroutes.gpx" title="Import to Garmin Connect → Courses, then sync to your watch">↓ Download GPX</a>
+              <button class="btn-gpx" id="btnSend" style="background:var(--accent);color:#1a0f08" title="Pushes straight to your Garmin account (needs the push service)">➤ Send to Garmin</button>
+              <span class="send-note" id="sendNote">GPX imports to Garmin Connect → Courses.</span>
             </div>
           </div>
           <div class="ai-plan" id="aiPlan">
@@ -480,8 +483,13 @@ function scheduleReadoutCollapse(){
 // Keep the whole loop clear of whichever panel height is currently showing.
 function fitMapToRoute(){
   if(!state.lastBounds) return;
-  const h=$('readout').classList.contains('show') ? $('readout').offsetHeight+28 : 70;
-  map.flyToBounds(state.lastBounds,{paddingTopLeft:[70,70],paddingBottomRight:[70,h],duration:.5});
+  const ro=$('readout'), shown=ro.classList.contains('show');
+  // Desktop: the card floats over the right edge, so keep the loop clear of its
+  // width. Mobile: it sits below the map and overlaps nothing.
+  const narrow=window.matchMedia('(max-width:920px)').matches;
+  const right=shown&&!narrow ? ro.offsetWidth+34 : 60;
+  const bottom=shown&&!narrow ? 60 : 60;
+  map.flyToBounds(state.lastBounds,{paddingTopLeft:[60,60],paddingBottomRight:[right,bottom],duration:.5});
 }
 
 const chips=['hilly 12-mile trail loop','easy 5 miles from here','flat fast 8 miles','long 18 for marathon block'];
