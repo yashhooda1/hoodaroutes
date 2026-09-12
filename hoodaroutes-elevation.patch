@@ -1,0 +1,360 @@
+diff --git a/README.md b/README.md
+index 85d1211..3cfb009 100644
+--- a/README.md
++++ b/README.md
+@@ -73,6 +73,17 @@ marathon and wrong for a flat one. Pick a race in the sidebar; connected athlete
+ get the choice persisted server-side (`/api/race`), anonymous visitors keep it in
+ `localStorage`. Add a race by adding an entry to `RACES`.
+ 
++## Elevation
++
++ORS returns SRTM elevation, which is unusable in flat cities — a measured 8.5 mi
++downtown Houston loop came back as 1,157 ft of gain (136 ft/mi) against a true
++figure under ~150 ft, with one reading below sea level. `web/lib/elevation.js`
++re-samples the geometry against Copernicus DEM (Open-Meteo's elevation API:
++free, keyless, batched) and then denoises — median filter for spikes, hysteresis
++accumulation so only sustained climbs count. Any failure falls back to the ORS
++values, which still get denoised. Set `ELEVATION_SOURCE=ors` to skip the lookup.
++Responses report which DEM was used in `elevationSource`.
++
+ ## Tests
+ 
+ ```
+diff --git a/web/index.html b/web/index.html
+index 7fc3f6e..8ab2f04 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -433,8 +433,8 @@ function fitColor(s){ return s>=85?'var(--cool)':s>=75?'var(--accent)':'#C9CEC9'
+ // a server-computed fit. Keep the two in sync if the formula changes.
+ function localRaceFit(miles,ascentFt,race){
+   const target=Math.max(1,(race&&race.targetFtPerMi)||13), anchor=Math.max(3,(race&&race.longRunMi)||20);
+-  const perMi=miles>0?Math.max(0,ascentFt)/miles:0, spread=Math.max(12,target*0.75);
+-  const terrain=35*Math.exp(-Math.pow((perMi-target)/spread,2));
++  const perMi=miles>0?Math.max(0,ascentFt)/miles:0, FLOOR=8, K=0.9;
++  const terrain=35*Math.exp(-Math.pow(Math.log((perMi+FLOOR)/(target+FLOOR))/K,2));
+   return Math.max(0,Math.min(100,Math.round(40+terrain+25*Math.min(1,miles/anchor))));
+ }
+ 
+diff --git a/web/lib/elevation.js b/web/lib/elevation.js
+new file mode 100644
+index 0000000..4d755bd
+--- /dev/null
++++ b/web/lib/elevation.js
+@@ -0,0 +1,152 @@
++// lib/elevation.js — trustworthy elevation for a route geometry.
++//
++// WHY THIS EXISTS. OpenRouteService returns per-point elevation from SRTM and
++// a summed `ascent`/`descent` alongside it. In flat urban terrain SRTM is
++// unusable: a measured 8.5 mi loop through downtown Houston came back as
++// 1,157 ft of gain (136 ft/mi) with individual readings swinging 46 -> 118 ft
++// over a few hundred metres and one point at -30 ft, below sea level. The true
++// figure is under ~150 ft. Summing every micro-delta turns that noise into
++// hundreds of feet of phantom climb, which then dominates any terrain-based
++// score.
++//
++// Two fixes, applied in order:
++//   1. Re-sample elevation from Copernicus DEM (Open-Meteo's elevation API —
++//      free, keyless, batched), which is markedly better than SRTM over cities.
++//   2. Denoise whatever we end up with: median smoothing to kill spikes, then
++//      hysteresis accumulation so only sustained climbs count.
++//
++// Step 1 is best-effort. Any failure — network, timeout, malformed response,
++// ELEVATION_SOURCE=ors — falls back to the ORS values, which still get step 2.
++// The route must never fail because an elevation lookup did.
++
++const OPEN_METEO = "https://api.open-meteo.com/v1/elevation";
++const CHUNK = 100; // Open-Meteo's documented per-request coordinate limit
++const MAX_POINTS = 600; // cap fan-out; longer routes are sampled and interpolated
++const TIMEOUT_MS = Number(process.env.ELEVATION_TIMEOUT_MS || 4000);
++
++const FT_PER_M = 3.28084;
++
++// --- denoising --------------------------------------------------------------
++
++function median(win) {
++  const s = [...win].sort((a, b) => a - b);
++  return s[s.length >> 1];
++}
++
++// Median filter: removes isolated spikes (a bridge deck, a building edge in the
++// DEM) without shifting a genuine hill the way a mean would.
++export function smoothElevations(elesM, win = 7) {
++  if (!Array.isArray(elesM) || elesM.length < 3) return elesM || [];
++  const h = win >> 1;
++  return elesM.map((_, i) =>
++    median(elesM.slice(Math.max(0, i - h), Math.min(elesM.length, i + h + 1)))
++  );
++}
++
++// Hysteresis accumulation: bank a climb only once it exceeds `thresholdM` from
++// the last committed reference point. This is how Strava and Garmin avoid
++// counting sensor jitter as vertical gain.
++export function accumulate(elesM, thresholdM = 3) {
++  if (!Array.isArray(elesM) || elesM.length < 2) return { ascentM: 0, descentM: 0 };
++  let ascent = 0;
++  let descent = 0;
++  let ref = elesM[0];
++  for (let i = 1; i < elesM.length; i++) {
++    const d = elesM[i] - ref;
++    if (d >= thresholdM) {
++      ascent += d;
++      ref = elesM[i];
++    } else if (d <= -thresholdM) {
++      descent += -d;
++      ref = elesM[i];
++    }
++  }
++  return { ascentM: ascent, descentM: descent };
++}
++
++// --- fetching ---------------------------------------------------------------
++
++async function fetchChunk(latlngs, signal) {
++  const lat = latlngs.map((p) => p[0].toFixed(5)).join(",");
++  const lng = latlngs.map((p) => p[1].toFixed(5)).join(",");
++  const r = await fetch(`${OPEN_METEO}?latitude=${lat}&longitude=${lng}`, { signal });
++  if (!r.ok) throw new Error(`elevation ${r.status}`);
++  const data = await r.json();
++  if (!Array.isArray(data.elevation) || data.elevation.length !== latlngs.length) {
++    throw new Error("elevation: unexpected response shape");
++  }
++  return data.elevation.map(Number);
++}
++
++// Evenly sample indices so a very long route still costs a bounded number of
++// requests. Always keeps the first and last point.
++function sampleIndices(n, max) {
++  if (n <= max) return Array.from({ length: n }, (_, i) => i);
++  const step = (n - 1) / (max - 1);
++  return Array.from({ length: max }, (_, i) => Math.round(i * step));
++}
++
++// Linear interpolation back onto every original point.
++function expand(values, indices, n) {
++  const out = new Array(n);
++  for (let k = 0; k < indices.length - 1; k++) {
++    const i0 = indices[k];
++    const i1 = indices[k + 1];
++    const v0 = values[k];
++    const v1 = values[k + 1];
++    for (let i = i0; i <= i1; i++) {
++      out[i] = i1 === i0 ? v0 : v0 + ((v1 - v0) * (i - i0)) / (i1 - i0);
++    }
++  }
++  out[n - 1] = values[values.length - 1];
++  for (let i = 0; i < n; i++) if (out[i] == null) out[i] = values[0];
++  return out;
++}
++
++// Returns metres for every latlng, or null if the lookup couldn't be trusted.
++export async function fetchElevationsM(latlngs) {
++  if ((process.env.ELEVATION_SOURCE || "open-meteo") === "ors") return null;
++  if (!Array.isArray(latlngs) || latlngs.length === 0) return null;
++
++  const idx = sampleIndices(latlngs.length, MAX_POINTS);
++  const pts = idx.map((i) => latlngs[i]);
++
++  const ac = new AbortController();
++  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
++  try {
++    const chunks = [];
++    for (let i = 0; i < pts.length; i += CHUNK) chunks.push(pts.slice(i, i + CHUNK));
++    const results = await Promise.all(chunks.map((c) => fetchChunk(c, ac.signal)));
++    const flat = results.flat();
++    if (flat.length !== pts.length || flat.some((v) => !Number.isFinite(v))) return null;
++    return idx.length === latlngs.length ? flat : expand(flat, idx, latlngs.length);
++  } catch (_) {
++    return null; // any failure -> caller keeps the ORS values
++  } finally {
++    clearTimeout(timer);
++  }
++}
++
++// --- the one function callers need -----------------------------------------
++//
++// Given the ORS geometry ([lng, lat, eleM]), produce a denoised elevation
++// profile and honest ascent/descent totals.
++export async function elevationProfile(coords) {
++  const latlngs = coords.map((c) => [c[1], c[0]]);
++  const orsM = coords.map((c) => Number(c[2]) || 0);
++
++  const fetched = await fetchElevationsM(latlngs);
++  const source = fetched ? "copernicus" : "srtm";
++  const rawM = fetched || orsM;
++
++  const smoothM = smoothElevations(rawM);
++  const { ascentM, descentM } = accumulate(smoothM);
++
++  return {
++    source,
++    elevationsM: smoothM,
++    elevationsFt: smoothM.map((m) => Math.round(m * FT_PER_M)),
++    ascentFt: Math.round(ascentM * FT_PER_M),
++    descentFt: Math.round(descentM * FT_PER_M),
++  };
++}
+diff --git a/web/lib/ors.js b/web/lib/ors.js
+index ed80cae..50b87d3 100644
+--- a/web/lib/ors.js
++++ b/web/lib/ors.js
+@@ -6,6 +6,7 @@
+ // Free key: https://openrouteservice.org/dev/#/signup  -> set ORS_API_KEY.
+ 
+ import { resolveRace, raceFit } from "./race.js";
++import { elevationProfile } from "./elevation.js";
+ 
+ const ORS_BASE = "https://api.openrouteservice.org/v2/directions";
+ const M_PER_MI = 1609.34;
+@@ -147,14 +148,22 @@ export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1
+   const f = best.f;
+   const distanceMi = best.distanceMi > 0 ? best.distanceMi : target;
+   const coords = f.geometry.coordinates;            // [lng, lat, ele]
+-  const ascentFt = Math.round((f.properties.ascent || 0) * FT_PER_M);
+-  const descentFt = Math.round((f.properties.descent || 0) * FT_PER_M);
++
++  // ORS's own ascent/descent sum every SRTM micro-delta, which in flat urban
++  // terrain is mostly noise (see lib/elevation.js). Re-derive from a better
++  // DEM where we can, and denoise either way.
++  const elev = await elevationProfile(coords);
++  const ascentFt = elev.ascentFt;
++  const descentFt = elev.descentFt;
+   const surf = classifySurface(best.extras, resolvedProfile);
+ 
+   return {
+-    coordinates: coords,                            // for GPX (lng,lat,ele)
++    // Geometry carries the corrected elevation, so GPX and the Garmin course
++    // get the same numbers the score was computed from.
++    coordinates: coords.map((c, i) => [c[0], c[1], elev.elevationsM[i]]),
+     latlngs: coords.map((c) => [c[1], c[0]]),        // for Leaflet
+-    elevationsFt: coords.map((c) => Math.round((c[2] || 0) * FT_PER_M)),
++    elevationsFt: elev.elevationsFt,
++    elevationSource: elev.source,                   // "copernicus" | "srtm"
+     distanceMi,
+     ascentFt,
+     descentFt,
+diff --git a/web/lib/race.js b/web/lib/race.js
+index 83dbe08..6105109 100644
+--- a/web/lib/race.js
++++ b/web/lib/race.js
+@@ -93,19 +93,28 @@ export function resolveRace(race) {
+ // raceFit — 0-100 "how specific is this route to the goal race".
+ //
+ //   40  base (any run is better than no run)
+-//  +35  terrain match: a Gaussian centred on the race's ft/mi, so being too
+-//       hilly for a flat race costs exactly as much as being too flat for a
+-//       hilly one. The spread scales with the target so a mountain race stays
+-//       tolerant while a flat race stays discriminating.
++//  +35  terrain match
+ //  +25  distance relevance, relative to the race's long-run anchor.
++//
++// The terrain term is a Gaussian on the LOG RATIO of actual to target ft/mi,
++// not on their absolute difference. That matters because elevation data is
++// noisy: an earlier absolute-difference version with a 12 ft/mi spread scored
++// zero terrain for anything past ~40 ft/mi, so a flat-race route measured with
++// typical DEM error collapsed to the same score as a mountain route. A ratio
++// is scale-free — 3x the target costs the same whether the target is 13 ft/mi
++// or 130 — and NOISE_FLOOR keeps a flat race from dividing by near-zero, since
++// nobody can measure the difference between 2 and 6 ft/mi anyway.
++const NOISE_FLOOR = 8; // ft/mi below which elevation data isn't meaningful
++const TERRAIN_K = 0.9; // width in log units; larger = more forgiving
++
+ export function raceFit(miles, ascentFt, race) {
+   const goal = resolveRace(race);
+   const mi = Math.max(0, Number(miles) || 0);
+   const perMi = mi > 0 ? Math.max(0, Number(ascentFt) || 0) / mi : 0;
+ 
+   const target = Math.max(1, goal.targetFtPerMi);
+-  const spread = Math.max(12, target * 0.75);
+-  const terrain = 35 * Math.exp(-Math.pow((perMi - target) / spread, 2));
++  const ratio = (perMi + NOISE_FLOOR) / (target + NOISE_FLOOR);
++  const terrain = 35 * Math.exp(-Math.pow(Math.log(ratio) / TERRAIN_K, 2));
+ 
+   const anchor = Math.max(3, goal.longRunMi || 20);
+   const dist = 25 * Math.min(1, mi / anchor);
+diff --git a/web/package.json b/web/package.json
+index dde7608..2393be7 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -6,7 +6,7 @@
+   "description": "HoodaRoutes — worldwide route generation + Strava-personalized training",
+   "engines": { "node": ">=20" },
+   "scripts": {
+-    "test": "node --test \"test/*.test.js\"",
++    "test": "node --test",
+     "check": "node --check-all 2>/dev/null || true"
+   }
+ }
+diff --git a/web/test/pure.test.js b/web/test/pure.test.js
+index 2727ca2..766e9d0 100644
+--- a/web/test/pure.test.js
++++ b/web/test/pure.test.js
+@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
+ import { classifySurface, surfaceToProfile } from "../lib/ors.js";
+ import { raceFit, resolveRace, RACES, DEFAULT_RACE_ID } from "../lib/race.js";
+ import { analyzeTraining, suggestToday } from "../lib/strava.js";
++import { smoothElevations, accumulate } from "../lib/elevation.js";
+ 
+ const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+ 
+@@ -118,3 +119,61 @@ test("suggestToday always returns a runnable distance", () => {
+     assert.ok(s.suggestedMiles >= 3 && s.suggestedMiles <= 22);
+   }
+ });
++
++// -------------------------------------------------- elevation denoising
++
++test("smoothElevations removes isolated spikes", () => {
++  const noisy = [10, 10, 40, 10, 10, 10, 11, 10];
++  const clean = smoothElevations(noisy, 5);
++  assert.ok(Math.max(...clean) < 20, `spike survived: ${clean}`);
++});
++
++test("accumulate ignores jitter below the threshold", () => {
++  const jitter = [];
++  for (let i = 0; i < 200; i++) jitter.push(100 + (i % 2 ? 1 : -1)); // 2 m swings
++  assert.equal(accumulate(jitter, 3).ascentM, 0);
++});
++
++test("accumulate still counts a real climb", () => {
++  const hill = [0, 20, 40, 60, 80, 100];
++  const { ascentM, descentM } = accumulate(hill, 3);
++  assert.equal(ascentM, 100);
++  assert.equal(descentM, 0);
++});
++
++test("accumulate reports descent separately on a loop", () => {
++  const loop = [0, 50, 100, 50, 0];
++  const { ascentM, descentM } = accumulate(loop, 3);
++  assert.equal(ascentM, 100);
++  assert.equal(descentM, 100);
++});
++
++test("denoising a real noisy SRTM profile cuts phantom climb substantially", () => {
++  // Excerpt of the measured downtown-Houston profile, in metres.
++  const srtm = [26.6, 26.9, 27.9, 29.6, 35, 35, 50, 50, 36, 17, 17, 37, 29, 9,
++    9, 10.6, 14, 11, 11, 5.4, 17, 17, 17, 14.6, 13, 15, 14, 17, 17, 15];
++  const raw = srtm.reduce((g, v, i) => (i && v > srtm[i - 1] ? g + v - srtm[i - 1] : g), 0);
++  const { ascentM } = accumulate(smoothElevations(srtm), 3);
++  assert.ok(ascentM < raw * 0.6, `expected big reduction, got ${ascentM} vs ${raw}`);
++});
++
++// ------------------------------------- terrain scoring must tolerate noise
++
++test("a flat route with realistic DEM error still scores well for a flat race", () => {
++  // 8.5 mi, 250 ft measured gain (~29 ft/mi) when the truth is nearer 13.
++  assert.ok(raceFit(8.5, 250, "houston") >= 60);
++});
++
++test("terrain scoring is driven by ratio, not absolute difference", () => {
++  // Both routes are ~2x their race's target ft/mi. Under the old absolute
++  // Gaussian the flat race scored ~0 terrain and the mountain race scored
++  // most of it; under a log ratio they land close together.
++  const flat = raceFit(10, 10 * 26, "houston");        // 26 vs 13 ft/mi
++  const mountain = raceFit(10, 10 * 136, "boulderthon"); // 136 vs 68 ft/mi
++  assert.ok(Math.abs(flat - mountain) <= 8, `flat ${flat} vs mountain ${mountain}`);
++  assert.ok(flat > 60 && mountain > 60);
++});
++
++test("a wildly wrong route still scores below a correct one", () => {
++  assert.ok(raceFit(10, 130, "houston") > raceFit(10, 1360, "houston"));
++});

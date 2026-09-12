@@ -8,3 +8,5 @@ __pycache__/
 .garminconnect/
 garmin_tokens.json
 bin/
+.vercel
+.env*

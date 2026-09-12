@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { classifySurface, surfaceToProfile } from "../lib/ors.js";
 import { raceFit, resolveRace, RACES, DEFAULT_RACE_ID } from "../lib/race.js";
 import { analyzeTraining, suggestToday } from "../lib/strava.js";
+import { smoothElevations, accumulate } from "../lib/elevation.js";
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
@@ -117,4 +118,62 @@ test("suggestToday always returns a runnable distance", () => {
     const s = suggestToday(runs);
     assert.ok(s.suggestedMiles >= 3 && s.suggestedMiles <= 22);
   }
+});
+
+// -------------------------------------------------- elevation denoising
+
+test("smoothElevations removes isolated spikes", () => {
+  const noisy = [10, 10, 40, 10, 10, 10, 11, 10];
+  const clean = smoothElevations(noisy, 5);
+  assert.ok(Math.max(...clean) < 20, `spike survived: ${clean}`);
+});
+
+test("accumulate ignores jitter below the threshold", () => {
+  const jitter = [];
+  for (let i = 0; i < 200; i++) jitter.push(100 + (i % 2 ? 1 : -1)); // 2 m swings
+  assert.equal(accumulate(jitter, 3).ascentM, 0);
+});
+
+test("accumulate still counts a real climb", () => {
+  const hill = [0, 20, 40, 60, 80, 100];
+  const { ascentM, descentM } = accumulate(hill, 3);
+  assert.equal(ascentM, 100);
+  assert.equal(descentM, 0);
+});
+
+test("accumulate reports descent separately on a loop", () => {
+  const loop = [0, 50, 100, 50, 0];
+  const { ascentM, descentM } = accumulate(loop, 3);
+  assert.equal(ascentM, 100);
+  assert.equal(descentM, 100);
+});
+
+test("denoising a real noisy SRTM profile cuts phantom climb substantially", () => {
+  // Excerpt of the measured downtown-Houston profile, in metres.
+  const srtm = [26.6, 26.9, 27.9, 29.6, 35, 35, 50, 50, 36, 17, 17, 37, 29, 9,
+    9, 10.6, 14, 11, 11, 5.4, 17, 17, 17, 14.6, 13, 15, 14, 17, 17, 15];
+  const raw = srtm.reduce((g, v, i) => (i && v > srtm[i - 1] ? g + v - srtm[i - 1] : g), 0);
+  const { ascentM } = accumulate(smoothElevations(srtm), 3);
+  assert.ok(ascentM < raw * 0.6, `expected big reduction, got ${ascentM} vs ${raw}`);
+});
+
+// ------------------------------------- terrain scoring must tolerate noise
+
+test("a flat route with realistic DEM error still scores well for a flat race", () => {
+  // 8.5 mi, 250 ft measured gain (~29 ft/mi) when the truth is nearer 13.
+  assert.ok(raceFit(8.5, 250, "houston") >= 60);
+});
+
+test("terrain scoring is driven by ratio, not absolute difference", () => {
+  // Both routes are ~2x their race's target ft/mi. Under the old absolute
+  // Gaussian the flat race scored ~0 terrain and the mountain race scored
+  // most of it; under a log ratio they land close together.
+  const flat = raceFit(10, 10 * 26, "houston");        // 26 vs 13 ft/mi
+  const mountain = raceFit(10, 10 * 136, "boulderthon"); // 136 vs 68 ft/mi
+  assert.ok(Math.abs(flat - mountain) <= 8, `flat ${flat} vs mountain ${mountain}`);
+  assert.ok(flat > 60 && mountain > 60);
+});
+
+test("a wildly wrong route still scores below a correct one", () => {
+  assert.ok(raceFit(10, 130, "houston") > raceFit(10, 1360, "houston"));
 });

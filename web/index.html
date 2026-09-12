@@ -433,8 +433,8 @@ function fitColor(s){ return s>=85?'var(--cool)':s>=75?'var(--accent)':'#C9CEC9'
 // a server-computed fit. Keep the two in sync if the formula changes.
 function localRaceFit(miles,ascentFt,race){
   const target=Math.max(1,(race&&race.targetFtPerMi)||13), anchor=Math.max(3,(race&&race.longRunMi)||20);
-  const perMi=miles>0?Math.max(0,ascentFt)/miles:0, spread=Math.max(12,target*0.75);
-  const terrain=35*Math.exp(-Math.pow((perMi-target)/spread,2));
+  const perMi=miles>0?Math.max(0,ascentFt)/miles:0, FLOOR=8, K=0.9;
+  const terrain=35*Math.exp(-Math.pow(Math.log((perMi+FLOOR)/(target+FLOOR))/K,2));
   return Math.max(0,Math.min(100,Math.round(40+terrain+25*Math.min(1,miles/anchor))));
 }
 

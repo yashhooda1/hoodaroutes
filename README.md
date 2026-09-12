@@ -73,6 +73,17 @@ marathon and wrong for a flat one. Pick a race in the sidebar; connected athlete
 get the choice persisted server-side (`/api/race`), anonymous visitors keep it in
 `localStorage`. Add a race by adding an entry to `RACES`.
 
+## Elevation
+
+ORS returns SRTM elevation, which is unusable in flat cities — a measured 8.5 mi
+downtown Houston loop came back as 1,157 ft of gain (136 ft/mi) against a true
+figure under ~150 ft, with one reading below sea level. `web/lib/elevation.js`
+re-samples the geometry against Copernicus DEM (Open-Meteo's elevation API:
+free, keyless, batched) and then denoises — median filter for spikes, hysteresis
+accumulation so only sustained climbs count. Any failure falls back to the ORS
+values, which still get denoised. Set `ELEVATION_SOURCE=ors` to skip the lookup.
+Responses report which DEM was used in `elevationSource`.
+
 ## Tests
 
 ```

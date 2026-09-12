@@ -93,19 +93,28 @@ export function resolveRace(race) {
 // raceFit — 0-100 "how specific is this route to the goal race".
 //
 //   40  base (any run is better than no run)
-//  +35  terrain match: a Gaussian centred on the race's ft/mi, so being too
-//       hilly for a flat race costs exactly as much as being too flat for a
-//       hilly one. The spread scales with the target so a mountain race stays
-//       tolerant while a flat race stays discriminating.
+//  +35  terrain match
 //  +25  distance relevance, relative to the race's long-run anchor.
+//
+// The terrain term is a Gaussian on the LOG RATIO of actual to target ft/mi,
+// not on their absolute difference. That matters because elevation data is
+// noisy: an earlier absolute-difference version with a 12 ft/mi spread scored
+// zero terrain for anything past ~40 ft/mi, so a flat-race route measured with
+// typical DEM error collapsed to the same score as a mountain route. A ratio
+// is scale-free — 3x the target costs the same whether the target is 13 ft/mi
+// or 130 — and NOISE_FLOOR keeps a flat race from dividing by near-zero, since
+// nobody can measure the difference between 2 and 6 ft/mi anyway.
+const NOISE_FLOOR = 8; // ft/mi below which elevation data isn't meaningful
+const TERRAIN_K = 0.9; // width in log units; larger = more forgiving
+
 export function raceFit(miles, ascentFt, race) {
   const goal = resolveRace(race);
   const mi = Math.max(0, Number(miles) || 0);
   const perMi = mi > 0 ? Math.max(0, Number(ascentFt) || 0) / mi : 0;
 
   const target = Math.max(1, goal.targetFtPerMi);
-  const spread = Math.max(12, target * 0.75);
-  const terrain = 35 * Math.exp(-Math.pow((perMi - target) / spread, 2));
+  const ratio = (perMi + NOISE_FLOOR) / (target + NOISE_FLOOR);
+  const terrain = 35 * Math.exp(-Math.pow(Math.log(ratio) / TERRAIN_K, 2));
 
   const anchor = Math.max(3, goal.longRunMi || 20);
   const dist = 25 * Math.min(1, mi / anchor);

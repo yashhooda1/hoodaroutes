@@ -6,6 +6,7 @@
 // Free key: https://openrouteservice.org/dev/#/signup  -> set ORS_API_KEY.
 
 import { resolveRace, raceFit } from "./race.js";
+import { elevationProfile } from "./elevation.js";
 
 const ORS_BASE = "https://api.openrouteservice.org/v2/directions";
 const M_PER_MI = 1609.34;
@@ -147,14 +148,22 @@ export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1
   const f = best.f;
   const distanceMi = best.distanceMi > 0 ? best.distanceMi : target;
   const coords = f.geometry.coordinates;            // [lng, lat, ele]
-  const ascentFt = Math.round((f.properties.ascent || 0) * FT_PER_M);
-  const descentFt = Math.round((f.properties.descent || 0) * FT_PER_M);
+
+  // ORS's own ascent/descent sum every SRTM micro-delta, which in flat urban
+  // terrain is mostly noise (see lib/elevation.js). Re-derive from a better
+  // DEM where we can, and denoise either way.
+  const elev = await elevationProfile(coords);
+  const ascentFt = elev.ascentFt;
+  const descentFt = elev.descentFt;
   const surf = classifySurface(best.extras, resolvedProfile);
 
   return {
-    coordinates: coords,                            // for GPX (lng,lat,ele)
+    // Geometry carries the corrected elevation, so GPX and the Garmin course
+    // get the same numbers the score was computed from.
+    coordinates: coords.map((c, i) => [c[0], c[1], elev.elevationsM[i]]),
     latlngs: coords.map((c) => [c[1], c[0]]),        // for Leaflet
-    elevationsFt: coords.map((c) => Math.round((c[2] || 0) * FT_PER_M)),
+    elevationsFt: elev.elevationsFt,
+    elevationSource: elev.source,                   // "copernicus" | "srtm"
     distanceMi,
     ascentFt,
     descentFt,
