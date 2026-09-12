@@ -128,6 +128,27 @@ training analysis. CI runs it on Node 20 and 22 alongside a credential scan.
 unauthenticated (drop a pin, get a loop) and therefore IP rate limited — 60
 generations and 20 interpretations per hour, enforced through the same Upstash.
 
+## Sending a route to a watch
+
+Two paths, deliberately:
+
+- **GPX** (`/api/garmin/course`) — download, import to Garmin Connect → Courses,
+  sync. Works for everyone, needs no integration.
+- **FIT, straight to the device** (`/api/garmin/course?format=fit`) — the
+  Connect IQ app requests this with `HTTP_RESPONSE_CONTENT_TYPE_FIT`. Connect IQ
+  saves the file into the device's own course list, then the app launches it via
+  `PersistedContent.getAppCourses()` + `System.exitTo(course.toIntent())`, which
+  hands off to native turn-by-turn navigation.
+
+The FIT path needs no Garmin account linkage and no Developer Program approval,
+which is why it exists. The official multi-user route is Garmin's Courses API
+(OAuth 2.0, pushes into the user's Garmin Connect account) — `lib/garmin-official.js`
+targets it, and it stays dormant until Garmin approves a partner application.
+
+`garmin-push/` remains single-user: it holds *one* set of Garmin credentials
+(yours). Do not point it at other people's accounts — that path needs their
+password and MFA code.
+
 ## Secrets hygiene
 
 No API key is ever sent to the browser: route generation, Strava, Garmin and

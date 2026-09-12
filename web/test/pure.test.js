@@ -8,6 +8,7 @@ import { classifySurface, surfaceToProfile } from "../lib/ors.js";
 import { raceFit, resolveRace, RACES, DEFAULT_RACE_ID } from "../lib/race.js";
 import { analyzeTraining, suggestToday } from "../lib/strava.js";
 import { smoothElevations, accumulate, cumulativeM } from "../lib/elevation.js";
+import { encodeCourseFit, crc16 } from "../lib/fit.js";
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
@@ -202,4 +203,113 @@ test("terrain scoring is driven by ratio, not absolute difference", () => {
 
 test("a wildly wrong route still scores below a correct one", () => {
   assert.ok(raceFit(10, 130, "houston") > raceFit(10, 1360, "houston"));
+});
+
+// ------------------------------------------------------------ FIT encoding
+
+// Minimal FIT reader: enough to prove the file we emit is well-formed without
+// adding a dependency. Walks definition/data records the way a device would.
+function readFit(buf) {
+  const headerSize = buf.readUInt8(0);
+  const dataSize = buf.readUInt32LE(4);
+  const magic = buf.subarray(8, 12).toString("ascii");
+  const fileCrc = buf.readUInt16LE(buf.length - 2);
+  const defs = new Map();
+  const counts = new Map();
+  const fields = [];
+  let p = headerSize;
+  const end = headerSize + dataSize;
+  while (p < end) {
+    const h = buf.readUInt8(p++);
+    const local = h & 0x0f;
+    if (h & 0x40) {
+      p += 2; // reserved + architecture
+      const global = buf.readUInt16LE(p); p += 2;
+      const n = buf.readUInt8(p++);
+      const fs = [];
+      for (let i = 0; i < n; i++) {
+        fs.push({ num: buf.readUInt8(p), size: buf.readUInt8(p + 1), type: buf.readUInt8(p + 2) });
+        p += 3;
+      }
+      defs.set(local, { global, fields: fs });
+    } else {
+      const d = defs.get(local);
+      if (!d) throw new Error(`data record for undefined local type ${local}`);
+      const rec = {};
+      for (const f of d.fields) {
+        if (f.type === 0x85) rec[f.num] = buf.readInt32LE(p);
+        else if (f.type === 0x86 || f.type === 0x8c) rec[f.num] = buf.readUInt32LE(p);
+        else if (f.type === 0x84) rec[f.num] = buf.readUInt16LE(p);
+        else if (f.type === 0x07) rec[f.num] = buf.subarray(p, p + f.size).toString("utf8").replace(/\0.*$/, "");
+        else rec[f.num] = buf.readUInt8(p);
+        p += f.size;
+      }
+      counts.set(d.global, (counts.get(d.global) || 0) + 1);
+      fields.push({ global: d.global, rec });
+    }
+  }
+  return { headerSize, dataSize, magic, fileCrc, counts, fields, consumed: p };
+}
+
+const squareLoop = () => {
+  const pts = [];
+  for (let i = 0; i < 40; i++) pts.push([-95.3698 + i * 0.0002, 29.7604 + i * 0.0001, 12 + (i % 7)]);
+  return pts;
+};
+
+test("FIT file has a valid header and magic", () => {
+  const buf = encodeCourseFit({ name: "T", coordinates: squareLoop() });
+  const f = readFit(buf);
+  assert.equal(f.magic, ".FIT");
+  assert.equal(f.headerSize, 14);
+  assert.equal(f.headerSize + f.dataSize + 2, buf.length);
+});
+
+test("FIT header and file CRCs verify", () => {
+  const buf = encodeCourseFit({ name: "T", coordinates: squareLoop() });
+  assert.equal(crc16(buf.subarray(0, 12)), buf.readUInt16LE(12));
+  assert.equal(crc16(buf.subarray(0, buf.length - 2)), buf.readUInt16LE(buf.length - 2));
+});
+
+test("FIT declares itself a course file with the right sport", () => {
+  const buf = encodeCourseFit({ name: "Houston Loop", coordinates: squareLoop(), sport: "running" });
+  const f = readFit(buf);
+  const fileId = f.fields.find((x) => x.global === 0).rec;
+  assert.equal(fileId[0], 6); // file type 6 = course
+  const course = f.fields.find((x) => x.global === 31).rec;
+  assert.equal(course[4], 1); // sport 1 = running
+  assert.equal(course[5], "Houston Loop");
+});
+
+test("FIT record count matches the geometry and positions round-trip", () => {
+  const pts = squareLoop();
+  const buf = encodeCourseFit({ name: "T", coordinates: pts });
+  const f = readFit(buf);
+  assert.equal(f.counts.get(20), pts.length);
+  const first = f.fields.find((x) => x.global === 20).rec;
+  const lat = first[0] / (2147483648 / 180);
+  const lng = first[1] / (2147483648 / 180);
+  assert.ok(Math.abs(lat - pts[0][1]) < 1e-5, `lat ${lat}`);
+  assert.ok(Math.abs(lng - pts[0][0]) < 1e-5, `lng ${lng}`);
+});
+
+test("FIT brackets the course with timer start and stop events", () => {
+  const buf = encodeCourseFit({ name: "T", coordinates: squareLoop() });
+  const f = readFit(buf);
+  const events = f.fields.filter((x) => x.global === 21).map((x) => x.rec);
+  assert.equal(events.length, 2);
+  assert.equal(events[0][1], 0); // start
+  assert.equal(events[1][1], 4); // stop_all
+});
+
+test("FIT downsamples very long routes instead of emitting thousands of points", () => {
+  const long = [];
+  for (let i = 0; i < 5000; i++) long.push([-95.37 + i * 0.00001, 29.76 + i * 0.00001, 10]);
+  const f = readFit(encodeCourseFit({ name: "T", coordinates: long }));
+  assert.ok(f.counts.get(20) <= 1000, `got ${f.counts.get(20)} records`);
+});
+
+test("encodeCourseFit refuses geometry it cannot make a course from", () => {
+  assert.throws(() => encodeCourseFit({ name: "T", coordinates: [] }));
+  assert.throws(() => encodeCourseFit({ name: "T", coordinates: [[0, 0, 0]] }));
 });
