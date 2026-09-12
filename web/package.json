@@ -6,7 +6,7 @@
   "description": "HoodaRoutes — worldwide route generation + Strava-personalized training",
   "engines": { "node": ">=20" },
   "scripts": {
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --test",
     "check": "node --check-all 2>/dev/null || true"
   }
 }
