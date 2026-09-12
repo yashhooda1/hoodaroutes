@@ -128,6 +128,18 @@
   .ro-sub{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
   .ro-close{background:var(--panel-2);border:1px solid var(--border);color:var(--muted);width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:15px;flex:0 0 auto}
   .ro-close:hover{color:var(--ink)}
+  .ro-btns{display:flex;gap:7px;flex:0 0 auto;align-items:center}
+
+  /* Collapsed readout: the panel spans the map, so at full height it hides the
+     route it is describing. Minimised, it keeps the numbers that matter in the
+     header bar and gives the map back. */
+  .readout{transition:max-height .28s ease}
+  .readout.min .ro-body,.readout.min .ai-plan{display:none}
+  .readout.min .ro-head{border-bottom:0;padding-bottom:13px}
+  .ro-mini{display:none;gap:16px;align-items:baseline;margin-top:6px;font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em}
+  .readout.min .ro-mini{display:flex;flex-wrap:wrap}
+  .ro-mini b{color:var(--ink);font-weight:700;font-size:13px}
+  .ro-mini .fitv{color:var(--accent)}
   .ro-body{display:grid;grid-template-columns:1fr 188px;gap:0}
   @media (max-width:680px){ .ro-body{grid-template-columns:1fr} }
   .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-soft)}
@@ -263,8 +275,15 @@
 
       <div class="readout" id="readout">
         <div class="ro-head">
-          <div><div class="ro-title" id="roTitle"></div><div class="ro-sub" id="roSub"></div></div>
-          <button class="ro-close" id="roClose" aria-label="Close">×</button>
+          <div>
+            <div class="ro-title" id="roTitle"></div>
+            <div class="ro-sub" id="roSub"></div>
+            <div class="ro-mini" id="roMini"></div>
+          </div>
+          <div class="ro-btns">
+            <button class="ro-close" id="roMin" aria-label="Minimise details" title="Minimise (M)">–</button>
+            <button class="ro-close" id="roClose" aria-label="Close">×</button>
+          </div>
         </div>
         <div class="ro-body">
           <div class="stats" id="roStats"></div>
@@ -299,7 +318,7 @@
 </div>
 
 <script>
-const state = { start:{lat:29.7604,lng:-95.3698}, miles:8, profile:'foot-walking', seed:1, key:'', pushUrl:'', apiBase:'', last:null, aiPlan:null, race:null };
+const state = { start:{lat:29.7604,lng:-95.3698}, miles:8, profile:'foot-walking', seed:1, key:'', pushUrl:'', apiBase:'', last:null, aiPlan:null, race:null, lastBounds:null };
 const $=id=>document.getElementById(id);
 const ORS=(p)=>`https://api.openrouteservice.org/v2/directions/${p}/geojson`;
 
@@ -424,6 +443,47 @@ $('btnShuffle').onclick=()=>{ state.seed=Math.floor(Math.random()*9999)+1; gener
 $('btnGen').onclick=()=>generate();
 $('roClose').onclick=()=>{ $('readout').classList.remove('show'); $('empty').style.display='flex'; routeLayer.clearLayers(); };
 
+/* ---------- readout: minimise ----------
+   The panel is absolutely positioned across the map, so at full height it hides
+   the route it describes. It opens expanded (the numbers are the point), then
+   collapses itself after a few seconds unless the user is reading it. Their
+   last explicit choice wins and is remembered. */
+const RO_LS='hr_readout_min';
+let roAutoTimer=null, roUserSet=false;
+
+function setReadoutMin(on,remember){
+  $('readout').classList.toggle('min',!!on);
+  $('roMin').textContent = on ? '+' : '–';
+  $('roMin').setAttribute('aria-label', on ? 'Expand details' : 'Minimise details');
+  if(remember){ roUserSet=true; localStorage.setItem(RO_LS, on?'1':'0'); }
+  clearTimeout(roAutoTimer);
+  fitMapToRoute();
+}
+$('roMin').onclick=()=>setReadoutMin(!$('readout').classList.contains('min'),true);
+
+// Reading the panel cancels the auto-collapse — nothing should vanish mid-sentence.
+$('readout').addEventListener('pointerenter',()=>clearTimeout(roAutoTimer));
+$('readout').addEventListener('focusin',()=>clearTimeout(roAutoTimer));
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='m'&&!/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)&&$('readout').classList.contains('show')){
+    setReadoutMin(!$('readout').classList.contains('min'),true);
+  }
+});
+
+function scheduleReadoutCollapse(){
+  clearTimeout(roAutoTimer);
+  if($('readout').classList.contains('min')) return;
+  roAutoTimer=setTimeout(()=>setReadoutMin(true,false),8000);
+}
+
+// Keep the whole loop clear of whichever panel height is currently showing.
+function fitMapToRoute(){
+  if(!state.lastBounds) return;
+  const h=$('readout').classList.contains('show') ? $('readout').offsetHeight+28 : 70;
+  map.flyToBounds(state.lastBounds,{paddingTopLeft:[70,70],paddingBottomRight:[70,h],duration:.5});
+}
+
 const chips=['hilly 12-mile trail loop','easy 5 miles from here','flat fast 8 miles','long 18 for marathon block'];
 chips.forEach(c=>{ const s=document.createElement('span'); s.className='chip'; s.textContent=c; s.onclick=()=>$('aiInput').value=c; $('aiChips').appendChild(s); });
 
@@ -471,7 +531,7 @@ function renderRoute(f, serverFit, serverDescentFt){
   routeLayer.clearLayers();
   L.polyline(latlngs,{color:'#FF6B35',weight:13,opacity:.16,lineJoin:'round'}).addTo(routeLayer);
   const pl=L.polyline(latlngs,{color:'#FF6B35',weight:5,opacity:.96,lineJoin:'round'}).addTo(routeLayer);
-  map.flyToBounds(pl.getBounds(),{padding:[70,70],duration:.7});
+  state.lastBounds=pl.getBounds();
 
   $('empty').style.display='none';
   $('roTitle').textContent=`${distMi} mi loop`;
@@ -480,6 +540,10 @@ function renderRoute(f, serverFit, serverDescentFt){
     <div class="stat"><div class="k">Distance</div><div class="v">${distMi}<small> mi</small></div></div>
     <div class="stat"><div class="k">Elev gain</div><div class="v cool">+${ascentFt}<small> ft</small></div></div>
     <div class="stat"><div class="k">Ft / mile</div><div class="v">${Math.round(ascentFt/Math.max(distMi,0.1))}</div></div>`;
+
+  // Collapsed header keeps the three numbers worth glancing at.
+  $('roMini').innerHTML=`<span><b>${distMi}</b> mi</span><span><b>+${ascentFt}</b> ft</span>`
+    +`<span>fit <b class="fitv">${fit}</b></span>`;
 
   const arc=$('ringArc'),num=$('ringNum'),C=2*Math.PI*50;
   arc.style.strokeDashoffset=C; num.textContent='0';
@@ -505,6 +569,11 @@ function renderRoute(f, serverFit, serverDescentFt){
   const a=$('btnGpx'); a.href=url; a.download=`hoodaroutes-${distMi}mi.gpx`;
 
   $('readout').classList.add('show');
+  // Remembered preference wins; otherwise open expanded and collapse shortly.
+  const savedMin=localStorage.getItem(RO_LS);
+  if(savedMin!==null) setReadoutMin(savedMin==='1',false);
+  else if(!roUserSet) setReadoutMin(false,false);
+  requestAnimationFrame(()=>{ fitMapToRoute(); if(savedMin!=='1') scheduleReadoutCollapse(); });
 
   // Save to history (only succeeds when a Strava session exists; ignored otherwise).
   try{
