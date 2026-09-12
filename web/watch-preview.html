@@ -166,7 +166,7 @@ function renderList(){
     const el=document.createElement('div');
     el.className='row'+(real===idx?' sel':'');
     el.innerHTML=`<div><div class="rn">${r.name}</div><div class="rmiles">${r.miles} MI · +${r.elev} FT · ${r.surf}</div></div>
-      <div class="fit"><b style="color:${fitColor(r.fit)}">${r.fit}</b><small>B-FIT</small></div>`;
+      <div class="fit"><b style="color:${fitColor(r.fit)}">${r.fit}</b><small>RACE FIT</small></div>`;
     el.onclick=()=>{ idx=real; renderList(); openDetail(); };
     rows.appendChild(el);
   });

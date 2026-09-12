@@ -103,7 +103,7 @@ function buildRouteMenu(routes as Lang.Array) as WatchUi.Menu2 {
     var menu = new WatchUi.Menu2({ :title => "Routes near you" });
     for (var i = 0; i < routes.size(); i++) {
         var r = routes[i] as Lang.Dictionary;
-        var sub = r["shade"].toString() + "   \u00B7   B-fit " + r["boulderFit"].toString();
+        var sub = r["shade"].toString() + "   \u00B7   Fit " + r["fit"].toString();
         menu.addItem(new WatchUi.MenuItem(r["name"] as Lang.String, sub, i, null));
     }
     return menu;

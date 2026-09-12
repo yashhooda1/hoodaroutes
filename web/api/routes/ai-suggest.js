@@ -13,6 +13,7 @@ import { getValidToken, recentRuns, analyzeTraining, suggestToday } from "../../
 import { generateLoop } from "../../lib/ors.js";
 import { aiSuggest } from "../../lib/aiCoach.js";
 import { kvGet, kvSet } from "../../lib/store.js";
+import { raceForRequest } from "../race.js";
 
 export default async function handler(req, res) {
   try {
@@ -23,6 +24,9 @@ export default async function handler(req, res) {
     const today = new Date().toISOString().slice(0, 10);
     const cacheKey = `ai-suggest:${athleteId}`;
     const force = req.query.refresh === "1" || req.query.refresh === "true";
+    // Resolved before the cache check: switching goal races must invalidate a
+    // cached suggestion, so the race id is part of the cache identity.
+    const race = await raceForRequest(req, s);
 
     // Training data: reuse the cached profile (from /api/strava/profile) so we
     // don't spend extra Strava rate limit re-fetching activities.
@@ -37,12 +41,12 @@ export default async function handler(req, res) {
     // Event-driven cache: reuse unless day changed or a new run appeared.
     if (!force) {
       const cached = await kvGet(cacheKey);
-      if (cached && cached.day === today && cached.runCount === profile.runCount) {
+      if (cached && cached.day === today && cached.runCount === profile.runCount && cached.raceId === race.id) {
         return res.status(200).json({ ...cached.payload, cached: true });
       }
     }
 
-    const ai = await aiSuggest(profile, heuristic);
+    const ai = await aiSuggest(profile, heuristic, race);
 
     // Generate the actual route from the athlete's usual start, if known.
     let route = null;
@@ -54,6 +58,7 @@ export default async function handler(req, res) {
           miles: ai.suggestedMiles,
           surface: ai.surface,
           seed: 7,
+          race,
         });
         route = {
           lat: profile.startLat,
@@ -61,7 +66,8 @@ export default async function handler(req, res) {
           distanceMi: g.distanceMi,
           ascentFt: g.ascentFt,
           surface: g.surface,
-          boulderFit: g.boulderFit,
+          fit: g.fit,
+          race: g.race,
           seed: g.seed,
           profile: g.profile,
           latlngs: g.latlngs,
@@ -80,11 +86,12 @@ export default async function handler(req, res) {
       coachingNotes: ai.coachingNotes,
       source: ai.source, // "ai" | "heuristic" — lets the UI show which fired
       basis: { weeklyAvg: profile.weeklyAvg, longestMi: profile.longestMi, weeks: profile.weeks },
+      race: { id: race.id, name: race.name },
       route,
     };
 
     // Cache 12h; the day/runCount check above also forces a natural recompute.
-    await kvSet(cacheKey, { day: today, runCount: profile.runCount, payload }, 12 * 3600);
+    await kvSet(cacheKey, { day: today, runCount: profile.runCount, raceId: race.id, payload }, 12 * 3600);
     res.status(200).json(payload);
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });

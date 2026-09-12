@@ -4,6 +4,7 @@ import { sessionFromReq } from "../../lib/session.js";
 import { getValidToken, recentRuns, analyzeTraining, suggestToday } from "../../lib/strava.js";
 import { generateLoop } from "../../lib/ors.js";
 import { kvGet, kvSet } from "../../lib/store.js";
+import { raceForRequest } from "../race.js";
 
 export default async function handler(req, res) {
   const s = sessionFromReq(req);
@@ -24,13 +25,14 @@ export default async function handler(req, res) {
     const miles = parseFloat(q.miles) || sug.suggestedMiles;
     const seed = parseInt(q.seed || "7", 10);
 
-    const route = await generateLoop({ lat, lng, miles, profile, seed });
+    const race = await raceForRequest(req, s);
+    const route = await generateLoop({ lat, lng, miles, profile, seed, race });
 
     // Save to the user's route history (last 30).
     try {
       const entry = {
         name: `${route.distanceMi} mi loop`, distMi: route.distanceMi, ascentFt: route.ascentFt,
-        fit: route.boulderFit, profile, lat, lng, seed, ts: Date.now(),
+        fit: route.fit, race: route.race.id, profile, lat, lng, seed, ts: Date.now(),
       };
       const arr = (await kvGet(`routes:${s.athleteId}`)) || [];
       arr.unshift(entry);

@@ -31,7 +31,7 @@ class RouteDetailView extends WatchUi.View {
         dc.drawText(cx, h * 0.55, Graphics.FONT_XTINY, "MILES", Graphics.TEXT_JUSTIFY_CENTER);
 
         // Stat row: elevation | shade | boulderthon fit
-        var fit = _r["boulderFit"] as Lang.Number;
+        var fit = _r["fit"] as Lang.Number;
         var fitColor = (fit >= 85) ? 0x36D29E : ((fit >= 75) ? 0xFF6B35 : 0xCCCCCC);
         var row = h * 0.70;
 

@@ -37,7 +37,14 @@ UPSTASH_REDIS_REST_URL    your Upstash REST URL
 UPSTASH_REDIS_REST_TOKEN
 GARMIN_PUSH_URL           the Railway push service base URL (optional)
 STRAVA_REFRESH_TOKEN      only for YOUR watch's "Today" option (single-user)
+ANTHROPIC_API_KEY         optional — enables the AI coach + /api/routes/interpret
+AI_MODEL                  optional — defaults to claude-sonnet-4-6
 ```
+
+Only `ORS_API_KEY` is load-bearing. Without `UPSTASH_*` the app falls back to an
+in-process store (fine for `vercel dev`, useless in production — it logs a warning
+saying so). Without `ANTHROPIC_API_KEY` every AI path degrades to a deterministic
+heuristic instead of erroring.
 In your Strava API app set **Authorization Callback Domain** = `APP_URL` host.
 After deploy, register the webhook once:
 `GET /api/strava/webhook-subscribe?token=$ADMIN_TOKEN`
@@ -57,9 +64,27 @@ Built with the Connect IQ SDK + VS Code and sideloaded to your FR970 (or publish
 the Connect IQ store). Set `BASE_URL` in `source/HoodaRoutesApp.mc` to your `web/`
 deployment. See `watch-connectiq` files and the build steps you already have.
 
-## Suggested setup order
+## Goal race
 
-1. Push this repo to a **new GitHub repo** (e.g. `yashhooda1/hoodaroutes`).
+The route **fit** score, the AI coach prompt and the natural-language parser are
+all driven by the athlete's selected goal race (`web/lib/race.js`), not by a race
+fixed at build time — a score that rewards climbing is right for a mountain
+marathon and wrong for a flat one. Pick a race in the sidebar; connected athletes
+get the choice persisted server-side (`/api/race`), anonymous visitors keep it in
+`localStorage`. Add a race by adding an entry to `RACES`.
+
+## Tests
+
+```
+cd web && npm test          # node --test — no network, no keys, no Redis
+```
+
+Covers the pure logic: race scoring, OSM surface classification, and the Strava
+training analysis. CI runs it on Node 20 and 22 alongside a credential scan.
+
+## Setup order
+
+1. Clone the repo.
 2. Vercel → New Project → import the repo → **Root Directory = `web`** → add env → deploy.
 3. Railway → New Project → deploy from repo → **Root Directory = `garmin-push`** → set
    Garmin env / token store. Copy its URL into Vercel's `GARMIN_PUSH_URL`.
@@ -76,11 +101,19 @@ deployment. See `watch-connectiq` files and the build steps you already have.
 | `POST /api/strava/webhook` · `webhook-subscribe` | live updates on new activities |
 | `GET  /api/routes/for-me` | loop sized to the user's training |
 | `POST /api/routes/generate` | loop from any lat/lng + distance |
+| `GET  /api/routes/ai-suggest` | AI coach's run for today (cached) |
+| `POST /api/routes/interpret` | plain English -> route params |
+| `GET  /api/race` · `POST /api/race` | read / set the goal race |
 | `POST /api/routes/save` · `GET /api/routes/list` | route history (dashboard) |
 | `POST /api/garmin/push` · `push-official` | create a Garmin course |
 | `GET  /api/garmin/routes` · `course` | watch options / GPX |
 
+`/api/routes/generate` and `/api/routes/interpret` are intentionally
+unauthenticated (drop a pin, get a loop) and therefore IP rate limited — 60
+generations and 20 interpretations per hour, enforced through the same Upstash.
+
 ## Secrets hygiene
 
-Never commit: ORS key, Strava secret, `SESSION_SECRET`, Upstash token, the Garmin
-token store. Use Vercel/Railway env + a `.gitignore` for `~/.garminconnect` and `.env`.
+No API key is ever sent to the browser: route generation, Strava, Garmin and
+every LLM call go through `web/api/*`. Never commit: ORS key, Strava secret,
+`ANTHROPIC_API_KEY`, `SESSION_SECRET`, Upstash token, the Garmin token store. Use Vercel/Railway env + a `.gitignore` for `~/.garminconnect` and `.env`.

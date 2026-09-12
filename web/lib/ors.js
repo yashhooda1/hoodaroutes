@@ -5,6 +5,8 @@
 // Works anywhere ORS/OSM has coverage (i.e. most of the planet).
 // Free key: https://openrouteservice.org/dev/#/signup  -> set ORS_API_KEY.
 
+import { resolveRace, raceFit } from "./race.js";
+
 const ORS_BASE = "https://api.openrouteservice.org/v2/directions";
 const M_PER_MI = 1609.34;
 const FT_PER_M = 3.28084;
@@ -112,9 +114,11 @@ export function surfaceToProfile(surface) {
 // to snap to whatever real streets exist, so a request for 6 mi can come back
 // 10+. We calibrate: generate, measure the miss, then re-request at a
 // proportionally scaled length and keep the closest result. Capped at 3 calls.
-export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1 }) {
+export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1, race }) {
   const key = process.env.ORS_API_KEY;
   if (!key) throw new Error("ORS_API_KEY is not set");
+
+  const goal = resolveRace(race);
 
   // Explicit profile wins; else derive from surface preference; else default.
   const resolvedProfile = profile || surfaceToProfile(surface) || "foot-walking";
@@ -154,7 +158,8 @@ export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1
     distanceMi,
     ascentFt,
     descentFt,
-    boulderFit: boulderFit(distanceMi, ascentFt),
+    fit: raceFit(distanceMi, ascentFt, goal),
+    race: { id: goal.id, name: goal.name, targetFtPerMi: goal.targetFtPerMi },
     profile: resolvedProfile,
     surface: surf.label,                            // detected: road|trail|track|mixed
     surfaceBreakdown: { paved: surf.pavedPct, unpaved: surf.unpavedPct, track: surf.trackPct },
@@ -164,11 +169,6 @@ export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1
   };
 }
 
-// Heuristic "Boulderthon fit": rewards rolling terrain (hill specificity for a
-// 5,400 ft rolling goal race) and sustained distance (marathon-block volume).
-export function boulderFit(miles, ascentFt) {
-  const perMi = miles > 0 ? ascentFt / miles : 0;
-  const hill = Math.min(38, perMi / 1.8);          // ~68 ft/mi -> ~38
-  const dist = Math.min(22, (miles / 20) * 22);    // 20 mi -> 22
-  return Math.max(0, Math.min(100, Math.round(45 + hill + dist)));
-}
+// Scoring now lives in lib/race.js (raceFit) so it follows the athlete's goal
+// race instead of being fixed to one course.
+export { raceFit, fitCaption } from "./race.js";

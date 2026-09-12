@@ -1,0 +1,1258 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..00bb4f2
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,40 @@
++name: ci
++
++on:
++  push:
++    branches: [main]
++  pull_request:
++
++jobs:
++  test:
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        node: ["20", "22"]
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: ${{ matrix.node }}
++      - name: Syntax-check every module
++        working-directory: web
++        run: |
++          find api lib -name '*.js' -print0 | xargs -0 -n1 node --check
++      - name: Unit tests
++        working-directory: web
++        run: npm test
++
++  secrets:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      # The whole product is API keys — a committed key is the one bug that
++      # can't be fixed by a redeploy. Fail the build instead.
++      - name: Scan for committed credentials
++        run: |
++          set -e
++          if grep -rInE '(sk-ant-[A-Za-z0-9_-]{20,}|5b3ce[a-f0-9]{30,}|AKIA[0-9A-Z]{16})' \
++               --exclude-dir=.git . ; then
++            echo "::error::possible credential committed"; exit 1
++          fi
++          echo "no credential patterns found"
+diff --git a/README.md b/README.md
+index ac4e780..85d1211 100644
+--- a/README.md
++++ b/README.md
+@@ -37,7 +37,14 @@ UPSTASH_REDIS_REST_URL    your Upstash REST URL
+ UPSTASH_REDIS_REST_TOKEN
+ GARMIN_PUSH_URL           the Railway push service base URL (optional)
+ STRAVA_REFRESH_TOKEN      only for YOUR watch's "Today" option (single-user)
++ANTHROPIC_API_KEY         optional — enables the AI coach + /api/routes/interpret
++AI_MODEL                  optional — defaults to claude-sonnet-4-6
+ ```
++
++Only `ORS_API_KEY` is load-bearing. Without `UPSTASH_*` the app falls back to an
++in-process store (fine for `vercel dev`, useless in production — it logs a warning
++saying so). Without `ANTHROPIC_API_KEY` every AI path degrades to a deterministic
++heuristic instead of erroring.
+ In your Strava API app set **Authorization Callback Domain** = `APP_URL` host.
+ After deploy, register the webhook once:
+ `GET /api/strava/webhook-subscribe?token=$ADMIN_TOKEN`
+@@ -57,9 +64,27 @@ Built with the Connect IQ SDK + VS Code and sideloaded to your FR970 (or publish
+ the Connect IQ store). Set `BASE_URL` in `source/HoodaRoutesApp.mc` to your `web/`
+ deployment. See `watch-connectiq` files and the build steps you already have.
+ 
+-## Suggested setup order
++## Goal race
++
++The route **fit** score, the AI coach prompt and the natural-language parser are
++all driven by the athlete's selected goal race (`web/lib/race.js`), not by a race
++fixed at build time — a score that rewards climbing is right for a mountain
++marathon and wrong for a flat one. Pick a race in the sidebar; connected athletes
++get the choice persisted server-side (`/api/race`), anonymous visitors keep it in
++`localStorage`. Add a race by adding an entry to `RACES`.
++
++## Tests
+ 
+-1. Push this repo to a **new GitHub repo** (e.g. `yashhooda1/hoodaroutes`).
++```
++cd web && npm test          # node --test — no network, no keys, no Redis
++```
++
++Covers the pure logic: race scoring, OSM surface classification, and the Strava
++training analysis. CI runs it on Node 20 and 22 alongside a credential scan.
++
++## Setup order
++
++1. Clone the repo.
+ 2. Vercel → New Project → import the repo → **Root Directory = `web`** → add env → deploy.
+ 3. Railway → New Project → deploy from repo → **Root Directory = `garmin-push`** → set
+    Garmin env / token store. Copy its URL into Vercel's `GARMIN_PUSH_URL`.
+@@ -76,11 +101,19 @@ deployment. See `watch-connectiq` files and the build steps you already have.
+ | `POST /api/strava/webhook` · `webhook-subscribe` | live updates on new activities |
+ | `GET  /api/routes/for-me` | loop sized to the user's training |
+ | `POST /api/routes/generate` | loop from any lat/lng + distance |
++| `GET  /api/routes/ai-suggest` | AI coach's run for today (cached) |
++| `POST /api/routes/interpret` | plain English -> route params |
++| `GET  /api/race` · `POST /api/race` | read / set the goal race |
+ | `POST /api/routes/save` · `GET /api/routes/list` | route history (dashboard) |
+ | `POST /api/garmin/push` · `push-official` | create a Garmin course |
+ | `GET  /api/garmin/routes` · `course` | watch options / GPX |
+ 
++`/api/routes/generate` and `/api/routes/interpret` are intentionally
++unauthenticated (drop a pin, get a loop) and therefore IP rate limited — 60
++generations and 20 interpretations per hour, enforced through the same Upstash.
++
+ ## Secrets hygiene
+ 
+-Never commit: ORS key, Strava secret, `SESSION_SECRET`, Upstash token, the Garmin
+-token store. Use Vercel/Railway env + a `.gitignore` for `~/.garminconnect` and `.env`.
++No API key is ever sent to the browser: route generation, Strava, Garmin and
++every LLM call go through `web/api/*`. Never commit: ORS key, Strava secret,
++`ANTHROPIC_API_KEY`, `SESSION_SECRET`, Upstash token, the Garmin token store. Use Vercel/Railway env + a `.gitignore` for `~/.garminconnect` and `.env`.
+diff --git a/watch-connectiq/source/LoadingView.mc b/watch-connectiq/source/LoadingView.mc
+index 77838f0..e5d19bb 100644
+--- a/watch-connectiq/source/LoadingView.mc
++++ b/watch-connectiq/source/LoadingView.mc
+@@ -103,7 +103,7 @@ function buildRouteMenu(routes as Lang.Array) as WatchUi.Menu2 {
+     var menu = new WatchUi.Menu2({ :title => "Routes near you" });
+     for (var i = 0; i < routes.size(); i++) {
+         var r = routes[i] as Lang.Dictionary;
+-        var sub = r["shade"].toString() + "   \u00B7   B-fit " + r["boulderFit"].toString();
++        var sub = r["shade"].toString() + "   \u00B7   Fit " + r["fit"].toString();
+         menu.addItem(new WatchUi.MenuItem(r["name"] as Lang.String, sub, i, null));
+     }
+     return menu;
+diff --git a/watch-connectiq/source/RouteDetailView.mc b/watch-connectiq/source/RouteDetailView.mc
+index beaa8f2..45a1bb9 100644
+--- a/watch-connectiq/source/RouteDetailView.mc
++++ b/watch-connectiq/source/RouteDetailView.mc
+@@ -31,7 +31,7 @@ class RouteDetailView extends WatchUi.View {
+         dc.drawText(cx, h * 0.55, Graphics.FONT_XTINY, "MILES", Graphics.TEXT_JUSTIFY_CENTER);
+ 
+         // Stat row: elevation | shade | boulderthon fit
+-        var fit = _r["boulderFit"] as Lang.Number;
++        var fit = _r["fit"] as Lang.Number;
+         var fitColor = (fit >= 85) ? 0x36D29E : ((fit >= 75) ? 0xFF6B35 : 0xCCCCCC);
+         var row = h * 0.70;
+ 
+diff --git a/web/api/garmin/routes.js b/web/api/garmin/routes.js
+index 2a1168b..65c3645 100644
+--- a/web/api/garmin/routes.js
++++ b/web/api/garmin/routes.js
+@@ -5,6 +5,8 @@
+ // GET/POST  { lat, lng }  ->  { lat, lng, routes: [ ... ] }
+ import { generateLoop } from "../../lib/ors.js";
+ import { stravaAccessTokenEnv, recentRuns, suggestToday } from "../../lib/strava.js";
++import { sessionFromReq } from "../../lib/session.js";
++import { raceForRequest } from "../race.js";
+ 
+ const SPECS = [
+   { label: "Recovery",   miles: 3,  profile: "foot-walking", seed: 5  },
+@@ -26,9 +28,11 @@ export default async function handler(req, res) {
+       return res.status(400).json({ error: "lat and lng are required" });
+     }
+ 
++    const race = await raceForRequest(req, sessionFromReq(req));
++
+     // Generate in parallel; tolerate individual failures.
+     const settled = await Promise.allSettled(
+-      SPECS.map((s) => generateLoop({ lat, lng, ...s }))
++      SPECS.map((s) => generateLoop({ lat, lng, ...s, race }))
+     );
+ 
+     const routes = [];
+@@ -42,7 +46,8 @@ export default async function handler(req, res) {
+           miles: v.distanceMi,
+           elevFt: v.ascentFt,
+           shade: v.surface,   // detected: road | trail | track | mixed
+-          boulderFit: v.boulderFit,
++          fit: v.fit,
++          boulderFit: v.fit,  // deprecated alias — drop once the watch app is rebuilt
+           lat, lng,
+           profile: s.profile,
+           seed: s.seed,
+@@ -56,14 +61,15 @@ export default async function handler(req, res) {
+       try {
+         const token = await stravaAccessTokenEnv();
+         const s = suggestToday(await recentRuns(token, 21));
+-        const v = await generateLoop({ lat, lng, miles: s.suggestedMiles, profile: "foot-walking", seed: 7 });
++        const v = await generateLoop({ lat, lng, miles: s.suggestedMiles, profile: "foot-walking", seed: 7, race });
+         routes.unshift({
+           id: "today",
+           name: `Today ${v.distanceMi} mi · ${s.type}`,
+           miles: v.distanceMi,
+           elevFt: v.ascentFt,
+           shade: v.surface,
+-          boulderFit: v.boulderFit,
++          fit: v.fit,
++          boulderFit: v.fit,  // deprecated alias
+           lat, lng,
+           profile: "foot-walking",
+           seed: 7,
+@@ -75,7 +81,7 @@ export default async function handler(req, res) {
+     }
+ 
+     res.setHeader("Cache-Control", "s-maxage=600");
+-    res.status(200).json({ lat, lng, routes });
++    res.status(200).json({ lat, lng, race: { id: race.id, name: race.name }, routes });
+   } catch (e) {
+     res.status(500).json({ error: String(e.message || e) });
+   }
+diff --git a/web/api/race.js b/web/api/race.js
+new file mode 100644
+index 0000000..33b52f6
+--- /dev/null
++++ b/web/api/race.js
+@@ -0,0 +1,59 @@
++// /api/race — the athlete's goal race.
++//
++// GET  -> { race, options }        (options = the catalogue for the picker)
++// POST { id } | { id, targetFtPerMi, longRunMi, name }  -> { race }
++//
++// Anonymous users get the default and keep their choice in localStorage;
++// connected users get it persisted server-side so the watch and the coach see
++// the same race the web app does.
++import { sessionFromReq } from "../lib/session.js";
++import { kvGet, kvSet } from "../lib/store.js";
++import { RACES, DEFAULT_RACE_ID, resolveRace, raceKey } from "../lib/race.js";
++
++const options = Object.values(RACES).map((r) => ({
++  id: r.id,
++  name: r.name,
++  targetFtPerMi: r.targetFtPerMi,
++  distanceMi: r.distanceMi,
++}));
++
++// Shared by the other endpoints: the race for this request, in priority order —
++// explicit query/body value, then the athlete's stored choice, then default.
++export async function raceForRequest(req, session) {
++  const q = req.method === "POST" ? req.body || {} : req.query;
++  if (q.race) return resolveRace(q.race);
++  if (session) {
++    try {
++      const stored = await kvGet(raceKey(session.athleteId));
++      if (stored) return resolveRace(stored);
++    } catch (_) { /* fall through to default */ }
++  }
++  return resolveRace(DEFAULT_RACE_ID);
++}
++
++export default async function handler(req, res) {
++  const s = sessionFromReq(req);
++  try {
++    if (req.method === "POST") {
++      if (!s) return res.status(401).json({ error: "connect Strava first" });
++      const b = req.body || {};
++      const race = resolveRace(
++        b.targetFtPerMi != null || b.name
++          ? {
++              id: b.id || "custom",
++              name: String(b.name || "Custom race").slice(0, 60),
++              targetFtPerMi: b.targetFtPerMi,
++              longRunMi: b.longRunMi,
++            }
++          : b.id
++      );
++      await kvSet(raceKey(s.athleteId), race);
++      return res.status(200).json({ race, options });
++    }
++
++    const race = s ? await raceForRequest(req, s) : resolveRace(DEFAULT_RACE_ID);
++    res.status(200).json({ race, options });
++  } catch (e) {
++    res.status(500).json({ error: String(e.message || e) });
++  }
++}
+diff --git a/web/api/routes/ai-suggest.js b/web/api/routes/ai-suggest.js
+index 165778e..95a272f 100644
+--- a/web/api/routes/ai-suggest.js
++++ b/web/api/routes/ai-suggest.js
+@@ -13,6 +13,7 @@ import { getValidToken, recentRuns, analyzeTraining, suggestToday } from "../../
+ import { generateLoop } from "../../lib/ors.js";
+ import { aiSuggest } from "../../lib/aiCoach.js";
+ import { kvGet, kvSet } from "../../lib/store.js";
++import { raceForRequest } from "../race.js";
+ 
+ export default async function handler(req, res) {
+   try {
+@@ -23,6 +24,9 @@ export default async function handler(req, res) {
+     const today = new Date().toISOString().slice(0, 10);
+     const cacheKey = `ai-suggest:${athleteId}`;
+     const force = req.query.refresh === "1" || req.query.refresh === "true";
++    // Resolved before the cache check: switching goal races must invalidate a
++    // cached suggestion, so the race id is part of the cache identity.
++    const race = await raceForRequest(req, s);
+ 
+     // Training data: reuse the cached profile (from /api/strava/profile) so we
+     // don't spend extra Strava rate limit re-fetching activities.
+@@ -37,12 +41,12 @@ export default async function handler(req, res) {
+     // Event-driven cache: reuse unless day changed or a new run appeared.
+     if (!force) {
+       const cached = await kvGet(cacheKey);
+-      if (cached && cached.day === today && cached.runCount === profile.runCount) {
++      if (cached && cached.day === today && cached.runCount === profile.runCount && cached.raceId === race.id) {
+         return res.status(200).json({ ...cached.payload, cached: true });
+       }
+     }
+ 
+-    const ai = await aiSuggest(profile, heuristic);
++    const ai = await aiSuggest(profile, heuristic, race);
+ 
+     // Generate the actual route from the athlete's usual start, if known.
+     let route = null;
+@@ -54,6 +58,7 @@ export default async function handler(req, res) {
+           miles: ai.suggestedMiles,
+           surface: ai.surface,
+           seed: 7,
++          race,
+         });
+         route = {
+           lat: profile.startLat,
+@@ -61,7 +66,8 @@ export default async function handler(req, res) {
+           distanceMi: g.distanceMi,
+           ascentFt: g.ascentFt,
+           surface: g.surface,
+-          boulderFit: g.boulderFit,
++          fit: g.fit,
++          race: g.race,
+           seed: g.seed,
+           profile: g.profile,
+           latlngs: g.latlngs,
+@@ -80,11 +86,12 @@ export default async function handler(req, res) {
+       coachingNotes: ai.coachingNotes,
+       source: ai.source, // "ai" | "heuristic" — lets the UI show which fired
+       basis: { weeklyAvg: profile.weeklyAvg, longestMi: profile.longestMi, weeks: profile.weeks },
++      race: { id: race.id, name: race.name },
+       route,
+     };
+ 
+     // Cache 12h; the day/runCount check above also forces a natural recompute.
+-    await kvSet(cacheKey, { day: today, runCount: profile.runCount, payload }, 12 * 3600);
++    await kvSet(cacheKey, { day: today, runCount: profile.runCount, raceId: race.id, payload }, 12 * 3600);
+     res.status(200).json(payload);
+   } catch (e) {
+     res.status(500).json({ error: String(e.message || e) });
+diff --git a/web/api/routes/for-me.js b/web/api/routes/for-me.js
+index 4721e19..6fb064f 100644
+--- a/web/api/routes/for-me.js
++++ b/web/api/routes/for-me.js
+@@ -4,6 +4,7 @@ import { sessionFromReq } from "../../lib/session.js";
+ import { getValidToken, recentRuns, analyzeTraining, suggestToday } from "../../lib/strava.js";
+ import { generateLoop } from "../../lib/ors.js";
+ import { kvGet, kvSet } from "../../lib/store.js";
++import { raceForRequest } from "../race.js";
+ 
+ export default async function handler(req, res) {
+   const s = sessionFromReq(req);
+@@ -24,13 +25,14 @@ export default async function handler(req, res) {
+     const miles = parseFloat(q.miles) || sug.suggestedMiles;
+     const seed = parseInt(q.seed || "7", 10);
+ 
+-    const route = await generateLoop({ lat, lng, miles, profile, seed });
++    const race = await raceForRequest(req, s);
++    const route = await generateLoop({ lat, lng, miles, profile, seed, race });
+ 
+     // Save to the user's route history (last 30).
+     try {
+       const entry = {
+         name: `${route.distanceMi} mi loop`, distMi: route.distanceMi, ascentFt: route.ascentFt,
+-        fit: route.boulderFit, profile, lat, lng, seed, ts: Date.now(),
++        fit: route.fit, race: route.race.id, profile, lat, lng, seed, ts: Date.now(),
+       };
+       const arr = (await kvGet(`routes:${s.athleteId}`)) || [];
+       arr.unshift(entry);
+diff --git a/web/api/routes/generate.js b/web/api/routes/generate.js
+index 7ee687c..22a2437 100644
+--- a/web/api/routes/generate.js
++++ b/web/api/routes/generate.js
+@@ -1,20 +1,30 @@
+ // /api/routes/generate  — used by the HoodaRoutes web app.
+-// POST { lat, lng, miles, profile, seed }  ->  real snapped loop + elevation.
++// POST { lat, lng, miles, profile, surface, seed, race }
++//   ->  real snapped loop + elevation + race-aware fit score.
++//
++// Unauthenticated by design (drop a pin, get a loop, no signup) — so it is IP
++// rate limited: every call spends OpenRouteService quota on a personal key.
+ import { generateLoop } from "../../lib/ors.js";
++import { sessionFromReq } from "../../lib/session.js";
++import { raceForRequest } from "../race.js";
++import { enforce } from "../../lib/ratelimit.js";
+ 
+ export default async function handler(req, res) {
++  if (await enforce(req, res, { bucket: "gen", limit: 60, windowSec: 3600 })) return;
+   try {
+     const q = req.method === "POST" ? req.body || {} : req.query;
+     const lat = parseFloat(q.lat);
+     const lng = parseFloat(q.lng);
+     const miles = parseFloat(q.miles || "8");
+     const profile = q.profile || "foot-walking";
++    const surface = q.surface || null;
+     const seed = parseInt(q.seed || "1", 10);
+ 
+     if (Number.isNaN(lat) || Number.isNaN(lng)) {
+       return res.status(400).json({ error: "lat and lng are required" });
+     }
+-    const route = await generateLoop({ lat, lng, miles, profile, seed });
++    const race = await raceForRequest(req, sessionFromReq(req));
++    const route = await generateLoop({ lat, lng, miles, profile, surface, seed, race });
+     res.setHeader("Cache-Control", "s-maxage=300");
+     res.status(200).json(route);
+   } catch (e) {
+diff --git a/web/api/routes/interpret.js b/web/api/routes/interpret.js
+new file mode 100644
+index 0000000..54a2814
+--- /dev/null
++++ b/web/api/routes/interpret.js
+@@ -0,0 +1,105 @@
++// /api/routes/interpret — natural language -> route-generation parameters.
++//
++// This used to run in the browser, calling api.anthropic.com directly with no
++// credentials. That only works inside an in-chat artifact sandbox; on a real
++// deployment it 401s and the whole "Interpret + generate" feature silently
++// fails. The key belongs on the server, so the call does too.
++//
++// POST { q, race? } -> { miles, profile, seed, structure[], coachingNotes,
++//                        fluidStrategy, source: "ai" | "fallback" }
++//
++// Same golden rule as lib/aiCoach.js: an AI failure degrades to a usable
++// answer, it never returns an error to the UI.
++import { AI_MODEL } from "../../lib/aiCoach.js";
++import { racePromptLine, resolveRace } from "../../lib/race.js";
++import { enforce } from "../../lib/ratelimit.js";
++
++const clampMiles = (n, d = 8) => Math.max(1, Math.min(26, Math.round(Number(n) || d)));
++
++// Keyword fallback for when there's no API key, the model errors, or the JSON
++// doesn't parse. Crude, but it always produces something generatable.
++function fallbackParse(q, goal) {
++  const text = String(q || "").toLowerCase();
++  const num = text.match(/(\d+(?:\.\d+)?)\s*(?:mi|mile|miles|k\b)?/);
++  let miles = num ? Number(num[1]) : 8;
++  if (/\bk\b|kilomet/.test(text) && num) miles = miles * 0.621371;
++  if (/long/.test(text) && !num) miles = goal.longRunMi;
++  if (/recovery|shakeout|easy/.test(text) && !num) miles = 5;
++  const trail = /trail|dirt|singletrack|woods|park|hill/.test(text);
++  return {
++    miles: clampMiles(miles),
++    profile: trail ? "foot-hiking" : "foot-walking",
++    seed: Math.floor(Math.random() * 9999) + 1,
++    structure: [],
++    coachingNotes: "",
++    fluidStrategy: "",
++    source: "fallback",
++  };
++}
++
++export default async function handler(req, res) {
++  if (await enforce(req, res, { bucket: "interpret", limit: 20, windowSec: 3600 })) return;
++
++  const body = req.method === "POST" ? req.body || {} : req.query;
++  const q = String(body.q || "").slice(0, 500);
++  const goal = resolveRace(body.race);
++
++  if (!q.trim()) return res.status(400).json({ error: "q is required" });
++
++  const key = process.env.ANTHROPIC_API_KEY;
++  if (!key) return res.status(200).json(fallbackParse(q, goal));
++
++  const sys = `You turn a runner's request into route-generation parameters for HoodaRoutes. Their goal race is: ${racePromptLine(goal)}
++Return ONLY JSON, no markdown:
++{"miles":<1-26>,"profile":"foot-walking"|"foot-hiking","seed":<1-9999>,"structure":[{"miles":<n>,"segment":"<text>","effort":"<EASY|STEADY|TEMPO|MP|HILLS|COOLDOWN>"}],"coachingNotes":"<1-2 sentences>","fluidStrategy":"<short note>"}
++Use foot-hiking for trail/hill requests, foot-walking for road/pavement. Sum of structure miles ~= miles. Keep coaching specific to the goal race above.`;
++
++  try {
++    const r = await fetch("https://api.anthropic.com/v1/messages", {
++      method: "POST",
++      headers: {
++        "Content-Type": "application/json",
++        "x-api-key": key,
++        "anthropic-version": "2023-06-01",
++      },
++      body: JSON.stringify({
++        model: AI_MODEL,
++        max_tokens: 1000,
++        system: sys,
++        messages: [{ role: "user", content: q }],
++      }),
++    });
++    if (!r.ok) throw new Error(`AI ${r.status}`);
++    const data = await r.json();
++    // Claude 5 / extended-thinking models put a thinking block first, so filter
++    // on type rather than reading content[0].
++    const text = (data.content || [])
++      .filter((b) => b.type === "text")
++      .map((b) => b.text)
++      .join("\n")
++      .replace(/```json|```/g, "")
++      .trim();
++    const p = JSON.parse(text);
++
++    // Validate every field — never hand raw model output to the route engine.
++    const structure = Array.isArray(p.structure)
++      ? p.structure.slice(0, 12).map((s) => ({
++          miles: Math.max(0, Math.min(26, Number(s.miles) || 0)),
++          segment: String(s.segment || "").slice(0, 120),
++          effort: String(s.effort || "EASY").slice(0, 16).toUpperCase(),
++        }))
++      : [];
++
++    res.status(200).json({
++      miles: clampMiles(p.miles),
++      profile: p.profile === "foot-hiking" ? "foot-hiking" : "foot-walking",
++      seed: Math.max(1, Math.min(9999, Math.round(Number(p.seed) || Math.floor(Math.random() * 9999) + 1))),
++      structure,
++      coachingNotes: String(p.coachingNotes || "").slice(0, 400),
++      fluidStrategy: String(p.fluidStrategy || "").slice(0, 200),
++      source: "ai",
++    });
++  } catch (_) {
++    res.status(200).json(fallbackParse(q, goal));
++  }
++}
+diff --git a/web/index.html b/web/index.html
+index 3bdcff0..7fc3f6e 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -1,3 +1,6 @@
++<!doctype html>
++<html lang="en">
++<head>
+ <!-- HoodaRoutes — worldwide AI route generation. Drop a pin anywhere, get a real snapped loop. -->
+ <meta charset="utf-8" />
+ <meta name="viewport" content="width=device-width, initial-scale=1" />
+@@ -9,7 +12,6 @@
+ <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+ <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+ <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+-<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+ 
+ <style>
+   :root{
+@@ -54,6 +56,10 @@
+   .keypanel input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:9px 10px}
+   .keypanel input:focus{outline:none;border-color:var(--accent)}
+ 
++  /* goal race picker */
++  select.racesel{width:100%;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;color:var(--ink);font-family:var(--body);font-size:13px;padding:10px 11px;cursor:pointer;appearance:none}
++  select.racesel:focus{outline:none;border-color:var(--accent)}
++
+   /* start card */
+   .startcard{background:linear-gradient(180deg,#181F1C,#141A18);border:1px solid var(--border);border-radius:var(--radius);padding:13px}
+   .startcard h3{margin:0 0 9px;font-family:var(--disp);font-weight:800;font-size:13.5px;display:flex;align-items:center;gap:7px}
+@@ -158,7 +164,9 @@
+   .foot{padding:10px 18px;border-top:1px solid var(--border-soft);font-family:var(--mono);font-size:9.5px;color:var(--muted-2);letter-spacing:.04em;line-height:1.5}
+   .foot b{color:var(--muted)}
+ </style>
++</head>
+ 
++<body>
+ <div class="app">
+   <header class="bar">
+     <div class="brand">
+@@ -208,7 +216,7 @@
+ 
+         <section class="ask">
+           <h3><span class="spark">◆</span> Describe your run</h3>
+-          <textarea id="aiInput" placeholder="e.g. hilly 12-mile trail loop for Boulderthon prep"></textarea>
++          <textarea id="aiInput" placeholder="e.g. 12-mile steady loop at marathon effort"></textarea>
+           <div class="chips" id="aiChips"></div>
+           <button class="btn-gen" id="aiBtn" style="background:var(--panel-2);color:var(--ink);border:1px solid var(--border)"><span id="aiBtnLabel">Interpret + generate</span></button>
+         </section>
+@@ -227,6 +235,12 @@
+           </div>
+         </div>
+ 
++        <div class="field">
++          <label>Goal race</label>
++          <select class="racesel" id="raceSel"></select>
++          <div class="hint" id="raceHint">Fit is scored against this race's terrain — a flat goal race rewards flat routes.</div>
++        </div>
++
+         <div class="actions">
+           <button class="btn-shuffle" id="btnShuffle" title="New variation">⟳</button>
+           <button class="btn-gen" id="btnGen"><span id="genLabel">Generate loop</span></button>
+@@ -260,7 +274,7 @@
+                 <circle cx="60" cy="60" r="50" stroke="var(--raise)" stroke-width="9" fill="none"/>
+                 <circle id="ringArc" cx="60" cy="60" r="50" stroke="var(--accent)" stroke-width="9" fill="none" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="314" transform="rotate(-90 60 60)" style="transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1)"/>
+               </svg>
+-              <div class="ring-val"><div class="ring-num" id="ringNum">0</div><div class="ring-lbl">Boulderthon<br>fit</div></div>
++              <div class="ring-val"><div class="ring-num" id="ringNum">0</div><div class="ring-lbl"><span id="ringRace">Race</span><br>fit</div></div>
+             </div>
+             <div class="bring-cap" id="ringCap"></div>
+           </div>
+@@ -285,7 +299,7 @@
+ </div>
+ 
+ <script>
+-const state = { start:{lat:29.7604,lng:-95.3698}, miles:8, profile:'foot-walking', seed:1, key:'', pushUrl:'', apiBase:'', last:null, aiPlan:null };
++const state = { start:{lat:29.7604,lng:-95.3698}, miles:8, profile:'foot-walking', seed:1, key:'', pushUrl:'', apiBase:'', last:null, aiPlan:null, race:null };
+ const $=id=>document.getElementById(id);
+ const ORS=(p)=>`https://api.openrouteservice.org/v2/directions/${p}/geojson`;
+ 
+@@ -415,7 +429,14 @@ chips.forEach(c=>{ const s=document.createElement('span'); s.className='chip'; s
+ 
+ /* ---------- generate (the real engine) ---------- */
+ function fitColor(s){ return s>=85?'var(--cool)':s>=75?'var(--accent)':'#C9CEC9'; }
+-function boulderFit(miles,ascentFt){ const perMi=miles>0?ascentFt/miles:0; const hill=Math.min(38,perMi/1.8); const dist=Math.min(22,(miles/20)*22); return Math.max(0,Math.min(100,Math.round(45+hill+dist))); }
++// Mirror of raceFit() in lib/race.js — only used if a response arrives without
++// a server-computed fit. Keep the two in sync if the formula changes.
++function localRaceFit(miles,ascentFt,race){
++  const target=Math.max(1,(race&&race.targetFtPerMi)||13), anchor=Math.max(3,(race&&race.longRunMi)||20);
++  const perMi=miles>0?Math.max(0,ascentFt)/miles:0, spread=Math.max(12,target*0.75);
++  const terrain=35*Math.exp(-Math.pow((perMi-target)/spread,2));
++  return Math.max(0,Math.min(100,Math.round(40+terrain+25*Math.min(1,miles/anchor))));
++}
+ 
+ async function generate(){
+   setGenLoading(true);
+@@ -427,7 +448,7 @@ async function generate(){
+     if(!res.ok||data.error) throw new Error(data.error||`Server ${res.status}`);
+     if(!data.coordinates||!data.coordinates.length) throw new Error('No route returned for this spot — try a different start or distance.');
+     const f={ geometry:{ coordinates:data.coordinates }, properties:{ summary:{ distance:(data.distanceMi||state.miles)*1609.34 }, ascent:(data.ascentFt||0)/3.28084, descent:(data.descentFt||0)/3.28084 } };
+-    renderRoute(f);
++    renderRoute(f, data.fit, data.descentFt);
+   }catch(err){
+     const msg=String(err.message||err);
+     if(/Failed to fetch|NetworkError|TypeError/i.test(msg)){
+@@ -436,15 +457,16 @@ async function generate(){
+   }finally{ setGenLoading(false); }
+ }
+ 
+-function renderRoute(f){
++function renderRoute(f, serverFit, serverDescentFt){
+   const coords=f.geometry.coordinates;                 // [lng,lat,ele]
+   const latlngs=coords.map(c=>[c[1],c[0]]);
+   const eles=coords.map(c=>(c[2]||0)*3.28084);          // ft
+   const sum=f.properties.summary||{};
+   const distMi=+(((sum.distance||0)/1609.34)||state.miles).toFixed(2);
+   const ascentFt=Math.round((f.properties.ascent||0)*3.28084);
+-  const fit=boulderFit(distMi,ascentFt);
+-  state.last={coords,distMi,ascentFt,fit};
++  const descentFt=serverDescentFt!=null?Math.round(serverDescentFt):Math.round((f.properties.descent||0)*3.28084);
++  const fit=serverFit!=null?serverFit:localRaceFit(distMi,ascentFt,state.race);
++  state.last={coords,distMi,ascentFt,descentFt,fit};
+ 
+   routeLayer.clearLayers();
+   L.polyline(latlngs,{color:'#FF6B35',weight:13,opacity:.16,lineJoin:'round'}).addTo(routeLayer);
+@@ -520,23 +542,22 @@ $('aiBtn').onclick=runAI;
+ async function runAI(){
+   const q=$('aiInput').value.trim(); if(!q){ $('aiInput').focus(); return; }
+   $('aiBtnLabel').innerHTML='<span class="spinner" style="display:inline-block;vertical-align:middle"></span> Thinking…';
+-  const sys=`You turn a runner's request into route-generation parameters for HoodaRoutes. The athlete trains for the Boulderthon Marathon (Sept 2026, 5,400 ft, rolling) with a sub-3:00 goal.
+-Return ONLY JSON, no markdown:
+-{"miles":<1-26>,"profile":"foot-walking"|"foot-hiking","seed":<1-9999>,"structure":[{"miles":<n>,"segment":"<text>","effort":"<EASY|STEADY|TEMPO|MP|HILLS|COOLDOWN>"}],"coachingNotes":"<1-2 sentences>","fluidStrategy":"<short note>"}
+-Use foot-hiking for trail/hill requests, foot-walking for road/pavement. Sum of structure miles ~= miles.`;
++  // Interpretation happens server-side (/api/routes/interpret) — the API key
++  // must never be in the browser, and the endpoint always returns a usable
++  // parse even when the model is unavailable.
+   try{
+-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
+-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,system:sys,messages:[{role:"user",content:q}]})});
+-    const data=await res.json();
+-    const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').replace(/```json|```/g,'').trim();
+-    const p=JSON.parse(text);
++    const res=await fetch(api('/api/routes/interpret'),{method:'POST',credentials:'include',
++      headers:{'Content-Type':'application/json'},
++      body:JSON.stringify({q, race: state.race ? state.race.id : undefined})});
++    const p=await res.json();
++    if(!res.ok||p.error) throw new Error(p.error||`Server ${res.status}`);
+     state.miles=Math.max(1,Math.min(26,Math.round(p.miles||8)));
+     state.profile=(p.profile==='foot-hiking')?'foot-hiking':'foot-walking';
+     state.seed=p.seed||Math.floor(Math.random()*9999)+1;
+     state.aiPlan=p;
+     $('distRange').value=state.miles; $('distVal').textContent=state.miles;
+     $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===state.profile));
+-    toast('Interpreted — generating route.');
++    toast(p.source==='ai'?'Interpreted — generating route.':'Parsed your request — generating route.');
+     await generate();
+   }catch(err){ toast('Could not interpret that. Set distance/surface manually and Generate.',true); }
+   finally{ $('aiBtnLabel').textContent='Interpret + generate'; }
+@@ -551,7 +572,8 @@ async function sendToGarmin(){
+   if(!state.last){ toast('Generate a route first.',true); return; }
+   const c=state.last;
+   const body={ name:`HoodaRoutes ${c.distMi}mi`, activityType:state.profile==='foot-hiking'?'TRAIL_RUNNING':'RUNNING',
+-    distanceM:Math.round(c.distMi*1609.34), ascentM:Math.round(c.ascentFt/3.28084), descentM:Math.round(c.ascentFt/3.28084),
++    distanceM:Math.round(c.distMi*1609.34), ascentM:Math.round(c.ascentFt/3.28084),
++    descentM:Math.round((c.descentFt!=null?c.descentFt:c.ascentFt)/3.28084),
+     geoPoints:c.coords.map(p=>({lat:p[1],lng:p[0],ele:p[2]||0})) };
+   $('btnSend').textContent='Sending…';
+   try{
+@@ -565,8 +587,46 @@ async function sendToGarmin(){
+ }
+ $('btnSend').onclick=sendToGarmin;
+ 
++/* ---------- goal race ---------- */
++// Anonymous visitors keep their pick in localStorage; connected athletes get it
++// persisted server-side so the coach, the dashboard and the watch agree.
++const RACE_LS='hr_race_id';
++async function loadRaces(){
++  let data;
++  try{
++    const r=await fetch(api('/api/race'),{credentials:'include'});
++    data=await r.json();
++    if(!r.ok||data.error) throw new Error(data.error||'failed');
++  }catch(_){
++    data={race:{id:'houston',name:'Chevron Houston Marathon',targetFtPerMi:13,longRunMi:20},
++          options:[{id:'houston',name:'Chevron Houston Marathon'}]};
++  }
++  const saved=localStorage.getItem(RACE_LS);
++  const pick=(saved && (data.options||[]).some(o=>o.id===saved)) ? saved : data.race.id;
++  state.race=(data.options||[]).find(o=>o.id===pick)||data.race;
++  const sel=$('raceSel');
++  sel.innerHTML=(data.options||[]).map(o=>`<option value="${o.id}"${o.id===pick?' selected':''}>${escapeHtml(o.name)}</option>`).join('');
++  sel.onchange=()=>selectRace(sel.value,(data.options||[]));
++  paintRace();
++}
++function paintRace(){
++  const r=state.race||{};
++  $('ringRace').textContent=(r.name||'Race').split(' ')[0];
++  $('raceHint').textContent=r.targetFtPerMi!=null
++    ? `Scored against ~${r.targetFtPerMi} ft of gain per mile — the terrain of this race.`
++    : "Fit is scored against this race's terrain.";
++}
++async function selectRace(id,options){
++  state.race=(options||[]).find(o=>o.id===id)||state.race;
++  localStorage.setItem(RACE_LS,id);
++  paintRace();
++  try{ await fetch(api('/api/race'),{method:'POST',credentials:'include',
++    headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); }catch(_){}
++  if(state.last) generate();   // rescore the current route against the new race
++}
++
+ /* ---------- init ---------- */
+-$('btnConnect').onclick=()=>{ window.location.href=api('/api/auth/strava/login'); };
++loadRaces();
+ checkAuth();
+ initMap();
+ // try to center on the user immediately (worldwide), non-blocking
+@@ -577,3 +637,5 @@ if(navigator.geolocation){
+   );
+ }
+ </script>
++</body>
++</html>
+diff --git a/web/lib/aiCoach.js b/web/lib/aiCoach.js
+index 52282e0..6cbfca6 100644
+--- a/web/lib/aiCoach.js
++++ b/web/lib/aiCoach.js
+@@ -7,7 +7,11 @@
+ // existing heuristic (suggestToday) is the safety net. This is the difference
+ // between a demo and a production AI feature.
+ 
+-const AI_MODEL = process.env.AI_MODEL || "claude-sonnet-4-5";
++import { racePromptLine, resolveRace } from "./race.js";
++
++// One model string for the whole app (the browser used to hardcode a different
++// one than the server). Override with AI_MODEL in the environment.
++export const AI_MODEL = process.env.AI_MODEL || "claude-sonnet-4-6";
+ const SURFACES = ["road", "trail", "track", "mixed"];
+ 
+ function heuristicShape(heuristic, profile, source) {
+@@ -21,13 +25,15 @@ function heuristicShape(heuristic, profile, source) {
+   };
+ }
+ 
+-export async function aiSuggest(profile, heuristic) {
++export async function aiSuggest(profile, heuristic, race) {
+   const key = process.env.ANTHROPIC_API_KEY;
+   // No key configured -> heuristic. The app works on day one; AI is an upgrade
+   // you switch on by adding ANTHROPIC_API_KEY to the environment.
+   if (!key) return heuristicShape(heuristic, profile, "heuristic");
+ 
+-  const sys = `You are a marathon coach. The athlete trains for the Boulderthon Marathon (September 2026, 5,400 ft, rolling course, sub-3:00 goal). Given their recent training, recommend TODAY's run.
++  const goal = resolveRace(race);
++  const sys = `You are a marathon coach. The athlete's goal race is: ${racePromptLine(goal)}
++Their stated goal time is ${profile.goalTime || "sub-3:00"}. Coach for THIS race — terrain specificity matters, so do not prescribe hill work for a flat goal race or flat pace work for a mountain one. Given their recent training, recommend TODAY's run.
+ Return ONLY JSON, no markdown, no prose outside the object:
+ {"suggestedMiles":<integer 3-22>,"type":"RECOVERY|EASY|STEADY|QUALITY|LONG","surface":"road|trail|track|mixed","rationale":"<one sentence citing their actual numbers>","coachingNotes":"<1-2 sentences of specific coaching>"}`;
+ 
+diff --git a/web/lib/ors.js b/web/lib/ors.js
+index 57def8c..ed80cae 100644
+--- a/web/lib/ors.js
++++ b/web/lib/ors.js
+@@ -5,6 +5,8 @@
+ // Works anywhere ORS/OSM has coverage (i.e. most of the planet).
+ // Free key: https://openrouteservice.org/dev/#/signup  -> set ORS_API_KEY.
+ 
++import { resolveRace, raceFit } from "./race.js";
++
+ const ORS_BASE = "https://api.openrouteservice.org/v2/directions";
+ const M_PER_MI = 1609.34;
+ const FT_PER_M = 3.28084;
+@@ -112,10 +114,12 @@ export function surfaceToProfile(surface) {
+ // to snap to whatever real streets exist, so a request for 6 mi can come back
+ // 10+. We calibrate: generate, measure the miss, then re-request at a
+ // proportionally scaled length and keep the closest result. Capped at 3 calls.
+-export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1 }) {
++export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1, race }) {
+   const key = process.env.ORS_API_KEY;
+   if (!key) throw new Error("ORS_API_KEY is not set");
+ 
++  const goal = resolveRace(race);
++
+   // Explicit profile wins; else derive from surface preference; else default.
+   const resolvedProfile = profile || surfaceToProfile(surface) || "foot-walking";
+ 
+@@ -154,7 +158,8 @@ export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1
+     distanceMi,
+     ascentFt,
+     descentFt,
+-    boulderFit: boulderFit(distanceMi, ascentFt),
++    fit: raceFit(distanceMi, ascentFt, goal),
++    race: { id: goal.id, name: goal.name, targetFtPerMi: goal.targetFtPerMi },
+     profile: resolvedProfile,
+     surface: surf.label,                            // detected: road|trail|track|mixed
+     surfaceBreakdown: { paved: surf.pavedPct, unpaved: surf.unpavedPct, track: surf.trackPct },
+@@ -164,11 +169,6 @@ export async function generateLoop({ lat, lng, miles, profile, surface, seed = 1
+   };
+ }
+ 
+-// Heuristic "Boulderthon fit": rewards rolling terrain (hill specificity for a
+-// 5,400 ft rolling goal race) and sustained distance (marathon-block volume).
+-export function boulderFit(miles, ascentFt) {
+-  const perMi = miles > 0 ? ascentFt / miles : 0;
+-  const hill = Math.min(38, perMi / 1.8);          // ~68 ft/mi -> ~38
+-  const dist = Math.min(22, (miles / 20) * 22);    // 20 mi -> 22
+-  return Math.max(0, Math.min(100, Math.round(45 + hill + dist)));
+-}
++// Scoring now lives in lib/race.js (raceFit) so it follows the athlete's goal
++// race instead of being fixed to one course.
++export { raceFit, fitCaption } from "./race.js";
+diff --git a/web/lib/race.js b/web/lib/race.js
+new file mode 100644
+index 0000000..83dbe08
+--- /dev/null
++++ b/web/lib/race.js
+@@ -0,0 +1,134 @@
++// lib/race.js — goal-race profiles.
++//
++// The route "fit" score and every coaching prompt are driven by the athlete's
++// CURRENT goal race, not a race welded in at build time. A score that rewards
++// climbing is correct for a mountain marathon and actively wrong for a flat
++// one, so the terrain target is a property of the race, not of the app.
++//
++// Add a race to RACES (or let a user store a custom one) and the ring, the
++// dashboard, the watch list and the AI coach all follow.
++
++export const RACES = {
++  houston: {
++    id: "houston",
++    name: "Chevron Houston Marathon",
++    distanceMi: 26.2,
++    targetFtPerMi: 13, // flat, sea level
++    elevationFt: 50,
++    longRunMi: 20,
++    month: 1,
++    terrain: "flat road",
++    notes:
++      "Flat, sea-level, January. Rewards marathon-pace volume and late-race " +
++      "fueling over hill strength; big climbs are supplemental, not specific.",
++  },
++  boulderthon: {
++    id: "boulderthon",
++    name: "Boulderthon Marathon",
++    distanceMi: 26.2,
++    targetFtPerMi: 68, // ~1,800 ft over the course, rolling
++    elevationFt: 5400,
++    longRunMi: 20,
++    month: 9,
++    terrain: "rolling road at altitude",
++    notes:
++      "Rolling course at 5,400 ft. Rewards hill specificity and sustained " +
++      "climbing under fatigue.",
++  },
++  road_marathon: {
++    id: "road_marathon",
++    name: "Road marathon (generic)",
++    distanceMi: 26.2,
++    targetFtPerMi: 25,
++    elevationFt: 0,
++    longRunMi: 20,
++    month: null,
++    terrain: "road",
++    notes: "Mixed road course with mild rollers.",
++  },
++  half_marathon: {
++    id: "half_marathon",
++    name: "Half marathon",
++    distanceMi: 13.1,
++    targetFtPerMi: 20,
++    elevationFt: 0,
++    longRunMi: 14,
++    month: null,
++    terrain: "road",
++    notes: "Half-marathon block: shorter long runs, more threshold work.",
++  },
++  trail_ultra: {
++    id: "trail_ultra",
++    name: "Trail ultra (50K+)",
++    distanceMi: 31,
++    targetFtPerMi: 130,
++    elevationFt: 0,
++    longRunMi: 24,
++    month: null,
++    terrain: "trail",
++    notes: "Vertical gain and time on feet matter more than pace.",
++  },
++};
++
++export const DEFAULT_RACE_ID = "houston";
++
++// Accepts a race id, a full race object, or null/undefined.
++// Unknown ids fall back to the default rather than throwing — a bad value in
++// a query string must never take down route generation.
++export function resolveRace(race) {
++  if (!race) return RACES[DEFAULT_RACE_ID];
++  if (typeof race === "string") return RACES[race] || RACES[DEFAULT_RACE_ID];
++  if (typeof race === "object") {
++    const base = RACES[race.id] || RACES[DEFAULT_RACE_ID];
++    return {
++      ...base,
++      ...race,
++      targetFtPerMi: Number(race.targetFtPerMi ?? base.targetFtPerMi),
++      longRunMi: Number(race.longRunMi ?? base.longRunMi),
++    };
++  }
++  return RACES[DEFAULT_RACE_ID];
++}
++
++// raceFit — 0-100 "how specific is this route to the goal race".
++//
++//   40  base (any run is better than no run)
++//  +35  terrain match: a Gaussian centred on the race's ft/mi, so being too
++//       hilly for a flat race costs exactly as much as being too flat for a
++//       hilly one. The spread scales with the target so a mountain race stays
++//       tolerant while a flat race stays discriminating.
++//  +25  distance relevance, relative to the race's long-run anchor.
++export function raceFit(miles, ascentFt, race) {
++  const goal = resolveRace(race);
++  const mi = Math.max(0, Number(miles) || 0);
++  const perMi = mi > 0 ? Math.max(0, Number(ascentFt) || 0) / mi : 0;
++
++  const target = Math.max(1, goal.targetFtPerMi);
++  const spread = Math.max(12, target * 0.75);
++  const terrain = 35 * Math.exp(-Math.pow((perMi - target) / spread, 2));
++
++  const anchor = Math.max(3, goal.longRunMi || 20);
++  const dist = 25 * Math.min(1, mi / anchor);
++
++  return Math.max(0, Math.min(100, Math.round(40 + terrain + dist)));
++}
++
++export function fitCaption(score) {
++  if (score >= 85) return "Prime prep route";
++  if (score >= 75) return "Strong fit";
++  return "Supplemental";
++}
++
++// One line of race context for LLM prompts — keeps every prompt in the app
++// consistent with whatever race the athlete has actually selected.
++export function racePromptLine(race) {
++  const g = resolveRace(race);
++  const when = g.month
++    ? ` (${["", "January", "February", "March", "April", "May", "June", "July",
++        "August", "September", "October", "November", "December"][g.month]})`
++    : "";
++  return `${g.name}${when} — ${g.distanceMi} mi, ${g.terrain}, about ${g.targetFtPerMi} ft of gain per mile. ${g.notes}`;
++}
++
++// Per-user storage key for the selected goal race.
++export const raceKey = (athleteId) => `race:${athleteId}`;
+diff --git a/web/lib/ratelimit.js b/web/lib/ratelimit.js
+new file mode 100644
+index 0000000..70b1b1e
+--- /dev/null
++++ b/web/lib/ratelimit.js
+@@ -0,0 +1,47 @@
++// lib/ratelimit.js — fixed-window IP rate limiting on the Upstash we already
++// run. /api/routes/generate and /api/routes/interpret are unauthenticated and
++// spend real money per call (OpenRouteService quota, Anthropic tokens), so they
++// cannot be left open to whoever finds the URL.
++//
++// Fixed window, not sliding: one INCR + one EXPIRE, cheap enough to sit in
++// front of every request. If the limiter itself fails we ALLOW the request —
++// a broken Redis must not take the product down.
++import { kvIncr, kvExpire } from "./store.js";
++
++export function clientIp(req) {
++  const fwd = req.headers["x-forwarded-for"];
++  if (fwd) return String(fwd).split(",")[0].trim();
++  return (
++    req.headers["x-real-ip"] ||
++    req.headers["x-vercel-forwarded-for"] ||
++    (req.socket && req.socket.remoteAddress) ||
++    "unknown"
++  );
++}
++
++export async function rateLimit(req, { bucket = "gen", limit = 30, windowSec = 3600 } = {}) {
++  const ip = clientIp(req);
++  const window = Math.floor(Date.now() / 1000 / windowSec);
++  const key = `rl:${bucket}:${ip}:${window}`;
++  try {
++    const n = await kvIncr(key);
++    if (n === 1) await kvExpire(key, windowSec);
++    return { ok: n <= limit, count: n, limit, remaining: Math.max(0, limit - n), windowSec };
++  } catch (_) {
++    return { ok: true, count: 0, limit, remaining: limit, windowSec, degraded: true };
++  }
++}
++
++// Applies the limit and writes the standard headers. Returns true if the
++// handler should stop.
++export async function enforce(req, res, opts) {
++  const r = await rateLimit(req, opts);
++  res.setHeader("X-RateLimit-Limit", String(r.limit));
++  res.setHeader("X-RateLimit-Remaining", String(r.remaining));
++  if (!r.ok) {
++    res.setHeader("Retry-After", String(r.windowSec));
++    res.status(429).json({ error: "Rate limit reached — try again shortly." });
++    return true;
++  }
++  return false;
++}
+diff --git a/web/lib/store.js b/web/lib/store.js
+index 914e7a2..b22d277 100644
+--- a/web/lib/store.js
++++ b/web/lib/store.js
+@@ -1,10 +1,64 @@
+ // lib/store.js — tiny Upstash Redis (REST) helper for per-user token storage.
+ // Env: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN (you already run Upstash).
++//
++// When those aren't set (local `vercel dev`, CI, a fresh clone) we fall back to
++// an in-process Map instead of throwing. Previously a missing env var made
++// EVERY endpoint 500, so the app couldn't be run at all without provisioning
++// Redis first. The fallback is per-instance and non-durable — fine for local
++// work, useless in production, which is why we log once and say so.
+ 
+ const URL = process.env.UPSTASH_REDIS_REST_URL;
+ const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
++export const usingMemoryStore = !URL || !TOKEN;
++
++if (usingMemoryStore) {
++  console.warn(
++    "[store] UPSTASH_REDIS_REST_URL/TOKEN not set — using in-memory store. " +
++      "Sessions and tokens will not survive a restart. Do not run production like this."
++  );
++}
++
++// --- in-memory fallback -----------------------------------------------------
++const mem = new Map(); // key -> { v: string, exp: number|null }
++
++function memAlive(e) {
++  if (!e) return false;
++  if (e.exp && e.exp < Date.now()) return false;
++  return true;
++}
++
++function memCommand([op, key, ...rest]) {
++  const e = mem.get(key);
++  switch (op) {
++    case "GET":
++      return memAlive(e) ? e.v : null;
++    case "SET": {
++      let exp = null;
++      const ex = rest.indexOf("EX");
++      if (ex !== -1) exp = Date.now() + Number(rest[ex + 1]) * 1000;
++      mem.set(key, { v: rest[0], exp });
++      return "OK";
++    }
++    case "DEL":
++      mem.delete(key);
++      return 1;
++    case "INCR": {
++      const n = (memAlive(e) ? Number(e.v) || 0 : 0) + 1;
++      mem.set(key, { v: String(n), exp: memAlive(e) ? e.exp : null });
++      return n;
++    }
++    case "EXPIRE": {
++      if (!memAlive(e)) return 0;
++      e.exp = Date.now() + Number(rest[0]) * 1000;
++      return 1;
++    }
++    default:
++      throw new Error(`memory store: unsupported command ${op}`);
++  }
++}
+ 
+ async function redis(command) {
++  if (usingMemoryStore) return memCommand(command);
+   const r = await fetch(URL, {
+     method: "POST",
+     headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+@@ -28,3 +82,12 @@ export async function kvSet(key, value, ttlSec) {
+ export async function kvDel(key) {
+   return redis(["DEL", key]);
+ }
++
++// Counter primitives — used by lib/ratelimit.js.
++export async function kvIncr(key) {
++  return Number(await redis(["INCR", key]));
++}
++
++export async function kvExpire(key, ttlSec) {
++  return redis(["EXPIRE", key, String(ttlSec)]);
++}
+diff --git a/web/package.json b/web/package.json
+index 6260709..dde7608 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -2,6 +2,11 @@
+   "name": "hoodaroutes-web",
+   "private": true,
+   "type": "module",
+-  "version": "1.0.0",
+-  "description": "HoodaRoutes — worldwide route generation + Strava-personalized training"
++  "version": "1.1.0",
++  "description": "HoodaRoutes — worldwide route generation + Strava-personalized training",
++  "engines": { "node": ">=20" },
++  "scripts": {
++    "test": "node --test \"test/*.test.js\"",
++    "check": "node --check-all 2>/dev/null || true"
++  }
+ }
+diff --git a/web/test/pure.test.js b/web/test/pure.test.js
+new file mode 100644
+index 0000000..2727ca2
+--- /dev/null
++++ b/web/test/pure.test.js
+@@ -0,0 +1,120 @@
++// Tests for the pure, network-free logic: route classification, race scoring
++// and training analysis. No Strava, no ORS, no Redis, no API key — so this
++// suite runs in CI on a bare checkout in well under a second.
++import test from "node:test";
++import assert from "node:assert/strict";
++
++import { classifySurface, surfaceToProfile } from "../lib/ors.js";
++import { raceFit, resolveRace, RACES, DEFAULT_RACE_ID } from "../lib/race.js";
++import { analyzeTraining, suggestToday } from "../lib/strava.js";
++
++const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
++
++// ---------------------------------------------------------------- race fit
++
++test("raceFit rewards flat routes for a flat goal race", () => {
++  const flat = raceFit(10, 120, "houston");   // 12 ft/mi
++  const hilly = raceFit(10, 900, "houston");  // 90 ft/mi
++  assert.ok(flat > hilly, `expected flat ${flat} > hilly ${hilly}`);
++});
++
++test("raceFit rewards hilly routes for a mountain goal race", () => {
++  const hilly = raceFit(10, 700, "boulderthon");
++  const flat = raceFit(10, 100, "boulderthon");
++  assert.ok(hilly > flat, `expected hilly ${hilly} > flat ${flat}`);
++});
++
++test("the same route scores differently against different races", () => {
++  const route = [10, 800];
++  assert.notEqual(raceFit(...route, "houston"), raceFit(...route, "boulderthon"));
++});
++
++test("raceFit stays in range for degenerate input", () => {
++  for (const args of [[0, 0], [0, 5000], [26, 0], [50, 40000], [-3, -3]]) {
++    const s = raceFit(args[0], args[1], "houston");
++    assert.ok(s >= 0 && s <= 100, `${args} -> ${s}`);
++    assert.ok(Number.isFinite(s));
++  }
++});
++
++test("longer routes score at least as high as shorter ones on equal terrain", () => {
++  const short = raceFit(5, 5 * 13, "houston");
++  const long = raceFit(20, 20 * 13, "houston");
++  assert.ok(long >= short);
++});
++
++test("resolveRace falls back rather than throwing on junk", () => {
++  assert.equal(resolveRace("not-a-race").id, RACES[DEFAULT_RACE_ID].id);
++  assert.equal(resolveRace(null).id, RACES[DEFAULT_RACE_ID].id);
++  assert.equal(resolveRace(undefined).id, RACES[DEFAULT_RACE_ID].id);
++});
++
++test("resolveRace accepts a custom override", () => {
++  const r = resolveRace({ id: "custom", name: "Backyard 50K", targetFtPerMi: 200, longRunMi: 24 });
++  assert.equal(r.targetFtPerMi, 200);
++  assert.equal(r.longRunMi, 24);
++});
++
++// ------------------------------------------------------- surface detection
++
++test("classifySurface reads a fully paved route as road", () => {
++  const extras = { surface: { summary: [{ value: 3, amount: 95 }, { value: 2, amount: 5 }] } };
++  assert.equal(classifySurface(extras).label, "road");
++});
++
++test("classifySurface reads a dirt route as trail", () => {
++  const extras = { surface: { summary: [{ value: 10, amount: 90 }, { value: 3, amount: 10 }] } };
++  assert.equal(classifySurface(extras).label, "trail");
++});
++
++test("classifySurface reads an even split as mixed", () => {
++  const extras = { surface: { summary: [{ value: 3, amount: 50 }, { value: 10, amount: 50 }] } };
++  assert.equal(classifySurface(extras).label, "mixed");
++});
++
++test("classifySurface falls back to waytype when surface is untagged", () => {
++  const extras = { surface: { summary: [] }, waytype: { summary: [{ value: 4, amount: 80 }] } };
++  assert.equal(classifySurface(extras).label, "trail");
++});
++
++test("classifySurface survives missing extras", () => {
++  assert.ok(["road", "trail", "track", "mixed"].includes(classifySurface(undefined).label));
++  assert.equal(classifySurface(undefined, "foot-hiking").label, "trail");
++});
++
++test("surfaceToProfile maps preferences to ORS foot profiles", () => {
++  assert.equal(surfaceToProfile("trail"), "foot-hiking");
++  assert.equal(surfaceToProfile("road"), "foot-walking");
++  assert.equal(surfaceToProfile("auto"), null);
++});
++
++// -------------------------------------------------------- training analysis
++
++test("analyzeTraining uses the most recent run's start, not an average", () => {
++  const runs = [
++    { miles: 6, date: daysAgo(1), movingTime: 2700, startLat: 29.76, startLng: -95.36 },
++    { miles: 8, date: daysAgo(9), movingTime: 3600, startLat: 40.01, startLng: -105.27 },
++  ];
++  const p = analyzeTraining(runs);
++  assert.equal(p.startLat, 29.76);
++  assert.equal(p.startLng, -95.36);
++});
++
++test("analyzeTraining handles an empty history without throwing", () => {
++  const p = analyzeTraining([]);
++  assert.equal(p.runCount, 0);
++  assert.equal(p.startLat, null);
++  assert.equal(p.avgPaceMinMi, null);
++});
++
++test("suggestToday prescribes recovery the day after a long run", () => {
++  const runs = [{ miles: 18, date: daysAgo(1), movingTime: 9000 }];
++  assert.equal(suggestToday(runs).type, "RECOVERY");
++});
++
++test("suggestToday always returns a runnable distance", () => {
++  for (const runs of [[], [{ miles: 22, date: daysAgo(1), movingTime: 11000 }]]) {
++    const s = suggestToday(runs);
++    assert.ok(s.suggestedMiles >= 3 && s.suggestedMiles <= 22);
++  }
++});
+diff --git a/web/watch-preview.html b/web/watch-preview.html
+index 3e620d7..fb8ee01 100644
+--- a/web/watch-preview.html
++++ b/web/watch-preview.html
+@@ -166,7 +166,7 @@ function renderList(){
+     const el=document.createElement('div');
+     el.className='row'+(real===idx?' sel':'');
+     el.innerHTML=`<div><div class="rn">${r.name}</div><div class="rmiles">${r.miles} MI · +${r.elev} FT · ${r.surf}</div></div>
+-      <div class="fit"><b style="color:${fitColor(r.fit)}">${r.fit}</b><small>B-FIT</small></div>`;
++      <div class="fit"><b style="color:${fitColor(r.fit)}">${r.fit}</b><small>RACE FIT</small></div>`;
+     el.onclick=()=>{ idx=real; renderList(); openDetail(); };
+     rows.appendChild(el);
+   });

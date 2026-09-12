@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax-check every module
+        working-directory: web
+        run: |
+          find api lib -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Unit tests
+        working-directory: web
+        run: npm test
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The whole product is API keys — a committed key is the one bug that
+      # can't be fixed by a redeploy. Fail the build instead.
+      - name: Scan for committed credentials
+        run: |
+          set -e
+          if grep -rInE '(sk-ant-[A-Za-z0-9_-]{20,}|5b3ce[a-f0-9]{30,}|AKIA[0-9A-Z]{16})' \
+               --exclude-dir=.git . ; then
+            echo "::error::possible credential committed"; exit 1
+          fi
+          echo "no credential patterns found"

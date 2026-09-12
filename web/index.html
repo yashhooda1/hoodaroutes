@@ -1,3 +1,6 @@
+<!doctype html>
+<html lang="en">
+<head>
 <!-- HoodaRoutes — worldwide AI route generation. Drop a pin anywhere, get a real snapped loop. -->
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,7 +12,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
 <style>
   :root{
@@ -53,6 +55,10 @@
   .keypanel a{color:var(--cool)}
   .keypanel input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:9px 10px}
   .keypanel input:focus{outline:none;border-color:var(--accent)}
+
+  /* goal race picker */
+  select.racesel{width:100%;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;color:var(--ink);font-family:var(--body);font-size:13px;padding:10px 11px;cursor:pointer;appearance:none}
+  select.racesel:focus{outline:none;border-color:var(--accent)}
 
   /* start card */
   .startcard{background:linear-gradient(180deg,#181F1C,#141A18);border:1px solid var(--border);border-radius:var(--radius);padding:13px}
@@ -158,7 +164,9 @@
   .foot{padding:10px 18px;border-top:1px solid var(--border-soft);font-family:var(--mono);font-size:9.5px;color:var(--muted-2);letter-spacing:.04em;line-height:1.5}
   .foot b{color:var(--muted)}
 </style>
+</head>
 
+<body>
 <div class="app">
   <header class="bar">
     <div class="brand">
@@ -208,7 +216,7 @@
 
         <section class="ask">
           <h3><span class="spark">◆</span> Describe your run</h3>
-          <textarea id="aiInput" placeholder="e.g. hilly 12-mile trail loop for Boulderthon prep"></textarea>
+          <textarea id="aiInput" placeholder="e.g. 12-mile steady loop at marathon effort"></textarea>
           <div class="chips" id="aiChips"></div>
           <button class="btn-gen" id="aiBtn" style="background:var(--panel-2);color:var(--ink);border:1px solid var(--border)"><span id="aiBtnLabel">Interpret + generate</span></button>
         </section>
@@ -225,6 +233,12 @@
             <button data-p="foot-walking" class="on">Road / path</button>
             <button data-p="foot-hiking">Trail</button>
           </div>
+        </div>
+
+        <div class="field">
+          <label>Goal race</label>
+          <select class="racesel" id="raceSel"></select>
+          <div class="hint" id="raceHint">Fit is scored against this race's terrain — a flat goal race rewards flat routes.</div>
         </div>
 
         <div class="actions">
@@ -260,7 +274,7 @@
                 <circle cx="60" cy="60" r="50" stroke="var(--raise)" stroke-width="9" fill="none"/>
                 <circle id="ringArc" cx="60" cy="60" r="50" stroke="var(--accent)" stroke-width="9" fill="none" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="314" transform="rotate(-90 60 60)" style="transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1)"/>
               </svg>
-              <div class="ring-val"><div class="ring-num" id="ringNum">0</div><div class="ring-lbl">Boulderthon<br>fit</div></div>
+              <div class="ring-val"><div class="ring-num" id="ringNum">0</div><div class="ring-lbl"><span id="ringRace">Race</span><br>fit</div></div>
             </div>
             <div class="bring-cap" id="ringCap"></div>
           </div>
@@ -285,7 +299,7 @@
 </div>
 
 <script>
-const state = { start:{lat:29.7604,lng:-95.3698}, miles:8, profile:'foot-walking', seed:1, key:'', pushUrl:'', apiBase:'', last:null, aiPlan:null };
+const state = { start:{lat:29.7604,lng:-95.3698}, miles:8, profile:'foot-walking', seed:1, key:'', pushUrl:'', apiBase:'', last:null, aiPlan:null, race:null };
 const $=id=>document.getElementById(id);
 const ORS=(p)=>`https://api.openrouteservice.org/v2/directions/${p}/geojson`;
 
@@ -415,7 +429,14 @@ chips.forEach(c=>{ const s=document.createElement('span'); s.className='chip'; s
 
 /* ---------- generate (the real engine) ---------- */
 function fitColor(s){ return s>=85?'var(--cool)':s>=75?'var(--accent)':'#C9CEC9'; }
-function boulderFit(miles,ascentFt){ const perMi=miles>0?ascentFt/miles:0; const hill=Math.min(38,perMi/1.8); const dist=Math.min(22,(miles/20)*22); return Math.max(0,Math.min(100,Math.round(45+hill+dist))); }
+// Mirror of raceFit() in lib/race.js — only used if a response arrives without
+// a server-computed fit. Keep the two in sync if the formula changes.
+function localRaceFit(miles,ascentFt,race){
+  const target=Math.max(1,(race&&race.targetFtPerMi)||13), anchor=Math.max(3,(race&&race.longRunMi)||20);
+  const perMi=miles>0?Math.max(0,ascentFt)/miles:0, spread=Math.max(12,target*0.75);
+  const terrain=35*Math.exp(-Math.pow((perMi-target)/spread,2));
+  return Math.max(0,Math.min(100,Math.round(40+terrain+25*Math.min(1,miles/anchor))));
+}
 
 async function generate(){
   setGenLoading(true);
@@ -427,7 +448,7 @@ async function generate(){
     if(!res.ok||data.error) throw new Error(data.error||`Server ${res.status}`);
     if(!data.coordinates||!data.coordinates.length) throw new Error('No route returned for this spot — try a different start or distance.');
     const f={ geometry:{ coordinates:data.coordinates }, properties:{ summary:{ distance:(data.distanceMi||state.miles)*1609.34 }, ascent:(data.ascentFt||0)/3.28084, descent:(data.descentFt||0)/3.28084 } };
-    renderRoute(f);
+    renderRoute(f, data.fit, data.descentFt);
   }catch(err){
     const msg=String(err.message||err);
     if(/Failed to fetch|NetworkError|TypeError/i.test(msg)){
@@ -436,15 +457,16 @@ async function generate(){
   }finally{ setGenLoading(false); }
 }
 
-function renderRoute(f){
+function renderRoute(f, serverFit, serverDescentFt){
   const coords=f.geometry.coordinates;                 // [lng,lat,ele]
   const latlngs=coords.map(c=>[c[1],c[0]]);
   const eles=coords.map(c=>(c[2]||0)*3.28084);          // ft
   const sum=f.properties.summary||{};
   const distMi=+(((sum.distance||0)/1609.34)||state.miles).toFixed(2);
   const ascentFt=Math.round((f.properties.ascent||0)*3.28084);
-  const fit=boulderFit(distMi,ascentFt);
-  state.last={coords,distMi,ascentFt,fit};
+  const descentFt=serverDescentFt!=null?Math.round(serverDescentFt):Math.round((f.properties.descent||0)*3.28084);
+  const fit=serverFit!=null?serverFit:localRaceFit(distMi,ascentFt,state.race);
+  state.last={coords,distMi,ascentFt,descentFt,fit};
 
   routeLayer.clearLayers();
   L.polyline(latlngs,{color:'#FF6B35',weight:13,opacity:.16,lineJoin:'round'}).addTo(routeLayer);
@@ -520,23 +542,22 @@ $('aiBtn').onclick=runAI;
 async function runAI(){
   const q=$('aiInput').value.trim(); if(!q){ $('aiInput').focus(); return; }
   $('aiBtnLabel').innerHTML='<span class="spinner" style="display:inline-block;vertical-align:middle"></span> Thinking…';
-  const sys=`You turn a runner's request into route-generation parameters for HoodaRoutes. The athlete trains for the Boulderthon Marathon (Sept 2026, 5,400 ft, rolling) with a sub-3:00 goal.
-Return ONLY JSON, no markdown:
-{"miles":<1-26>,"profile":"foot-walking"|"foot-hiking","seed":<1-9999>,"structure":[{"miles":<n>,"segment":"<text>","effort":"<EASY|STEADY|TEMPO|MP|HILLS|COOLDOWN>"}],"coachingNotes":"<1-2 sentences>","fluidStrategy":"<short note>"}
-Use foot-hiking for trail/hill requests, foot-walking for road/pavement. Sum of structure miles ~= miles.`;
+  // Interpretation happens server-side (/api/routes/interpret) — the API key
+  // must never be in the browser, and the endpoint always returns a usable
+  // parse even when the model is unavailable.
   try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,system:sys,messages:[{role:"user",content:q}]})});
-    const data=await res.json();
-    const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').replace(/```json|```/g,'').trim();
-    const p=JSON.parse(text);
+    const res=await fetch(api('/api/routes/interpret'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({q, race: state.race ? state.race.id : undefined})});
+    const p=await res.json();
+    if(!res.ok||p.error) throw new Error(p.error||`Server ${res.status}`);
     state.miles=Math.max(1,Math.min(26,Math.round(p.miles||8)));
     state.profile=(p.profile==='foot-hiking')?'foot-hiking':'foot-walking';
     state.seed=p.seed||Math.floor(Math.random()*9999)+1;
     state.aiPlan=p;
     $('distRange').value=state.miles; $('distVal').textContent=state.miles;
     $('surfSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===state.profile));
-    toast('Interpreted — generating route.');
+    toast(p.source==='ai'?'Interpreted — generating route.':'Parsed your request — generating route.');
     await generate();
   }catch(err){ toast('Could not interpret that. Set distance/surface manually and Generate.',true); }
   finally{ $('aiBtnLabel').textContent='Interpret + generate'; }
@@ -551,7 +572,8 @@ async function sendToGarmin(){
   if(!state.last){ toast('Generate a route first.',true); return; }
   const c=state.last;
   const body={ name:`HoodaRoutes ${c.distMi}mi`, activityType:state.profile==='foot-hiking'?'TRAIL_RUNNING':'RUNNING',
-    distanceM:Math.round(c.distMi*1609.34), ascentM:Math.round(c.ascentFt/3.28084), descentM:Math.round(c.ascentFt/3.28084),
+    distanceM:Math.round(c.distMi*1609.34), ascentM:Math.round(c.ascentFt/3.28084),
+    descentM:Math.round((c.descentFt!=null?c.descentFt:c.ascentFt)/3.28084),
     geoPoints:c.coords.map(p=>({lat:p[1],lng:p[0],ele:p[2]||0})) };
   $('btnSend').textContent='Sending…';
   try{
@@ -565,8 +587,46 @@ async function sendToGarmin(){
 }
 $('btnSend').onclick=sendToGarmin;
 
+/* ---------- goal race ---------- */
+// Anonymous visitors keep their pick in localStorage; connected athletes get it
+// persisted server-side so the coach, the dashboard and the watch agree.
+const RACE_LS='hr_race_id';
+async function loadRaces(){
+  let data;
+  try{
+    const r=await fetch(api('/api/race'),{credentials:'include'});
+    data=await r.json();
+    if(!r.ok||data.error) throw new Error(data.error||'failed');
+  }catch(_){
+    data={race:{id:'houston',name:'Chevron Houston Marathon',targetFtPerMi:13,longRunMi:20},
+          options:[{id:'houston',name:'Chevron Houston Marathon'}]};
+  }
+  const saved=localStorage.getItem(RACE_LS);
+  const pick=(saved && (data.options||[]).some(o=>o.id===saved)) ? saved : data.race.id;
+  state.race=(data.options||[]).find(o=>o.id===pick)||data.race;
+  const sel=$('raceSel');
+  sel.innerHTML=(data.options||[]).map(o=>`<option value="${o.id}"${o.id===pick?' selected':''}>${escapeHtml(o.name)}</option>`).join('');
+  sel.onchange=()=>selectRace(sel.value,(data.options||[]));
+  paintRace();
+}
+function paintRace(){
+  const r=state.race||{};
+  $('ringRace').textContent=(r.name||'Race').split(' ')[0];
+  $('raceHint').textContent=r.targetFtPerMi!=null
+    ? `Scored against ~${r.targetFtPerMi} ft of gain per mile — the terrain of this race.`
+    : "Fit is scored against this race's terrain.";
+}
+async function selectRace(id,options){
+  state.race=(options||[]).find(o=>o.id===id)||state.race;
+  localStorage.setItem(RACE_LS,id);
+  paintRace();
+  try{ await fetch(api('/api/race'),{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); }catch(_){}
+  if(state.last) generate();   // rescore the current route against the new race
+}
+
 /* ---------- init ---------- */
-$('btnConnect').onclick=()=>{ window.location.href=api('/api/auth/strava/login'); };
+loadRaces();
 checkAuth();
 initMap();
 // try to center on the user immediately (worldwide), non-blocking
@@ -577,3 +637,5 @@ if(navigator.geolocation){
   );
 }
 </script>
+</body>
+</html>

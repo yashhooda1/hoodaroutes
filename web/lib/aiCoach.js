@@ -7,7 +7,11 @@
 // existing heuristic (suggestToday) is the safety net. This is the difference
 // between a demo and a production AI feature.
 
-const AI_MODEL = process.env.AI_MODEL || "claude-sonnet-4-5";
+import { racePromptLine, resolveRace } from "./race.js";
+
+// One model string for the whole app (the browser used to hardcode a different
+// one than the server). Override with AI_MODEL in the environment.
+export const AI_MODEL = process.env.AI_MODEL || "claude-sonnet-4-6";
 const SURFACES = ["road", "trail", "track", "mixed"];
 
 function heuristicShape(heuristic, profile, source) {
@@ -21,13 +25,15 @@ function heuristicShape(heuristic, profile, source) {
   };
 }
 
-export async function aiSuggest(profile, heuristic) {
+export async function aiSuggest(profile, heuristic, race) {
   const key = process.env.ANTHROPIC_API_KEY;
   // No key configured -> heuristic. The app works on day one; AI is an upgrade
   // you switch on by adding ANTHROPIC_API_KEY to the environment.
   if (!key) return heuristicShape(heuristic, profile, "heuristic");
 
-  const sys = `You are a marathon coach. The athlete trains for the Boulderthon Marathon (September 2026, 5,400 ft, rolling course, sub-3:00 goal). Given their recent training, recommend TODAY's run.
+  const goal = resolveRace(race);
+  const sys = `You are a marathon coach. The athlete's goal race is: ${racePromptLine(goal)}
+Their stated goal time is ${profile.goalTime || "sub-3:00"}. Coach for THIS race — terrain specificity matters, so do not prescribe hill work for a flat goal race or flat pace work for a mountain one. Given their recent training, recommend TODAY's run.
 Return ONLY JSON, no markdown, no prose outside the object:
 {"suggestedMiles":<integer 3-22>,"type":"RECOVERY|EASY|STEADY|QUALITY|LONG","surface":"road|trail|track|mixed","rationale":"<one sentence citing their actual numbers>","coachingNotes":"<1-2 sentences of specific coaching>"}`;
 

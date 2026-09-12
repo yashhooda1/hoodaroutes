@@ -5,6 +5,8 @@
 // GET/POST  { lat, lng }  ->  { lat, lng, routes: [ ... ] }
 import { generateLoop } from "../../lib/ors.js";
 import { stravaAccessTokenEnv, recentRuns, suggestToday } from "../../lib/strava.js";
+import { sessionFromReq } from "../../lib/session.js";
+import { raceForRequest } from "../race.js";
 
 const SPECS = [
   { label: "Recovery",   miles: 3,  profile: "foot-walking", seed: 5  },
@@ -26,9 +28,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "lat and lng are required" });
     }
 
+    const race = await raceForRequest(req, sessionFromReq(req));
+
     // Generate in parallel; tolerate individual failures.
     const settled = await Promise.allSettled(
-      SPECS.map((s) => generateLoop({ lat, lng, ...s }))
+      SPECS.map((s) => generateLoop({ lat, lng, ...s, race }))
     );
 
     const routes = [];
@@ -42,7 +46,8 @@ export default async function handler(req, res) {
           miles: v.distanceMi,
           elevFt: v.ascentFt,
           shade: v.surface,   // detected: road | trail | track | mixed
-          boulderFit: v.boulderFit,
+          fit: v.fit,
+          boulderFit: v.fit,  // deprecated alias — drop once the watch app is rebuilt
           lat, lng,
           profile: s.profile,
           seed: s.seed,
@@ -56,14 +61,15 @@ export default async function handler(req, res) {
       try {
         const token = await stravaAccessTokenEnv();
         const s = suggestToday(await recentRuns(token, 21));
-        const v = await generateLoop({ lat, lng, miles: s.suggestedMiles, profile: "foot-walking", seed: 7 });
+        const v = await generateLoop({ lat, lng, miles: s.suggestedMiles, profile: "foot-walking", seed: 7, race });
         routes.unshift({
           id: "today",
           name: `Today ${v.distanceMi} mi · ${s.type}`,
           miles: v.distanceMi,
           elevFt: v.ascentFt,
           shade: v.surface,
-          boulderFit: v.boulderFit,
+          fit: v.fit,
+          boulderFit: v.fit,  // deprecated alias
           lat, lng,
           profile: "foot-walking",
           seed: 7,
@@ -75,7 +81,7 @@ export default async function handler(req, res) {
     }
 
     res.setHeader("Cache-Control", "s-maxage=600");
-    res.status(200).json({ lat, lng, routes });
+    res.status(200).json({ lat, lng, race: { id: race.id, name: race.name }, routes });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
