@@ -79,8 +79,13 @@ ORS returns SRTM elevation, which is unusable in flat cities — a measured 8.5 
 downtown Houston loop came back as 1,157 ft of gain (136 ft/mi) against a true
 figure under ~150 ft, with one reading below sea level. `web/lib/elevation.js`
 re-samples the geometry against Copernicus DEM (Open-Meteo's elevation API:
-free, keyless, batched) and then denoises — median filter for spikes, hysteresis
-accumulation so only sustained climbs count. Any failure falls back to the ORS
+free, keyless, batched) and then denoises. Copernicus is better than SRTM but is
+still a SURFACE model — it reports building rooftops, which on the same loop
+showed up as 8% of points reading above 90 ft against true ground of ~49 ft. So
+the median filter is windowed by metres of route (`ELEVATION_SMOOTH_M`, default
+500) rather than by point count, since a city block is a sustained plateau
+rather than a spike, followed by hysteresis accumulation so only sustained
+climbs count. Measured effect on that loop: 1157 ft -> 427 ft -> 121 ft. Any failure falls back to the ORS
 values, which still get denoised. Set `ELEVATION_SOURCE=ors` to skip the lookup.
 Responses report which DEM was used in `elevationSource`.
 

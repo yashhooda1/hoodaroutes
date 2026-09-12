@@ -1,0 +1,172 @@
+diff --git a/README.md b/README.md
+index 3cfb009..dfcf38c 100644
+--- a/README.md
++++ b/README.md
+@@ -79,8 +79,13 @@ ORS returns SRTM elevation, which is unusable in flat cities — a measured 8.5
+ downtown Houston loop came back as 1,157 ft of gain (136 ft/mi) against a true
+ figure under ~150 ft, with one reading below sea level. `web/lib/elevation.js`
+ re-samples the geometry against Copernicus DEM (Open-Meteo's elevation API:
+-free, keyless, batched) and then denoises — median filter for spikes, hysteresis
+-accumulation so only sustained climbs count. Any failure falls back to the ORS
++free, keyless, batched) and then denoises. Copernicus is better than SRTM but is
++still a SURFACE model — it reports building rooftops, which on the same loop
++showed up as 8% of points reading above 90 ft against true ground of ~49 ft. So
++the median filter is windowed by metres of route (`ELEVATION_SMOOTH_M`, default
++500) rather than by point count, since a city block is a sustained plateau
++rather than a spike, followed by hysteresis accumulation so only sustained
++climbs count. Measured effect on that loop: 1157 ft -> 427 ft -> 121 ft. Any failure falls back to the ORS
+ values, which still get denoised. Set `ELEVATION_SOURCE=ors` to skip the lookup.
+ Responses report which DEM was used in `elevationSource`.
+ 
+diff --git a/web/lib/elevation.js b/web/lib/elevation.js
+index 4d755bd..6b2514b 100644
+--- a/web/lib/elevation.js
++++ b/web/lib/elevation.js
+@@ -12,8 +12,10 @@
+ // Two fixes, applied in order:
+ //   1. Re-sample elevation from Copernicus DEM (Open-Meteo's elevation API —
+ //      free, keyless, batched), which is markedly better than SRTM over cities.
+-//   2. Denoise whatever we end up with: median smoothing to kill spikes, then
+-//      hysteresis accumulation so only sustained climbs count.
++//   2. Denoise whatever we end up with: a distance-windowed median filter (both
++//      DEMs are SURFACE models and report building rooftops, which a narrow
++//      filter cannot reject), then hysteresis accumulation so only sustained
++//      climbs count.
+ //
+ // Step 1 is best-effort. Any failure — network, timeout, malformed response,
+ // ELEVATION_SOURCE=ors — falls back to the ORS values, which still get step 2.
+@@ -33,14 +35,67 @@ function median(win) {
+   return s[s.length >> 1];
+ }
+ 
+-// Median filter: removes isolated spikes (a bridge deck, a building edge in the
+-// DEM) without shifting a genuine hill the way a mean would.
+-export function smoothElevations(elesM, win = 7) {
++// Median filter over a window measured in METRES OF ROUTE, not in points.
++//
++// Window width is the whole game here. Copernicus (like SRTM) is a Digital
++// SURFACE Model: it includes buildings. A city block of towers doesn't show up
++// as an isolated spike a narrow filter can reject — it's a sustained plateau,
++// six or ten consecutive points sitting on a roof. On the measured downtown
++// Houston loop, 8% of points read above 90 ft against a true ground level of
++// ~49 ft, and a 7-point window left 50 ft/mi of phantom climb. A ~500 m window
++// reduces the same route to 14 ft/mi, which matches reality.
++//
++// A median rejects a plateau only while it occupies less than half the window,
++// so a 500 m window handles built-up blocks up to ~250 m across. Wider than
++// that — a single very long structure, an elevated freeway run — still leaks.
++//
++// The trade-off, stated plainly: real terrain features shorter than about
++// 250 m get flattened too. For scoring a running route against a goal race
++// that's the right call; for a hill-rep route it under-reports.
++export const SMOOTH_WINDOW_M = Number(process.env.ELEVATION_SMOOTH_M || 500);
++
++// Great-circle metres between two [lat, lng] points.
++function haversineM(a, b) {
++  const R = 6371000;
++  const toRad = (d) => (d * Math.PI) / 180;
++  const dLat = toRad(b[0] - a[0]);
++  const dLng = toRad(b[1] - a[1]);
++  const s =
++    Math.sin(dLat / 2) ** 2 +
++    Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
++  return 2 * R * Math.asin(Math.sqrt(s));
++}
++
++export function cumulativeM(latlngs) {
++  const out = [0];
++  for (let i = 1; i < latlngs.length; i++) {
++    out[i] = out[i - 1] + haversineM(latlngs[i - 1], latlngs[i]);
++  }
++  return out;
++}
++
++// latlngs optional: without them the window falls back to a fixed point count,
++// which is what the pure unit tests exercise.
++export function smoothElevations(elesM, latlngs = null, windowM = SMOOTH_WINDOW_M) {
+   if (!Array.isArray(elesM) || elesM.length < 3) return elesM || [];
+-  const h = win >> 1;
+-  return elesM.map((_, i) =>
+-    median(elesM.slice(Math.max(0, i - h), Math.min(elesM.length, i + h + 1)))
+-  );
++
++  if (!latlngs || latlngs.length !== elesM.length) {
++    const h = 3;
++    return elesM.map((_, i) =>
++      median(elesM.slice(Math.max(0, i - h), Math.min(elesM.length, i + h + 1)))
++    );
++  }
++
++  const cum = cumulativeM(latlngs);
++  const half = windowM / 2;
++  let lo = 0;
++  let hi = 0;
++  return elesM.map((_, i) => {
++    while (cum[i] - cum[lo] > half) lo++;
++    while (hi < elesM.length - 1 && cum[hi + 1] - cum[i] <= half) hi++;
++    if (hi < i) hi = i;
++    return median(elesM.slice(lo, hi + 1));
++  });
+ }
+ 
+ // Hysteresis accumulation: bank a climb only once it exceeds `thresholdM` from
+@@ -139,7 +194,7 @@ export async function elevationProfile(coords) {
+   const source = fetched ? "copernicus" : "srtm";
+   const rawM = fetched || orsM;
+ 
+-  const smoothM = smoothElevations(rawM);
++  const smoothM = smoothElevations(rawM, latlngs);
+   const { ascentM, descentM } = accumulate(smoothM);
+ 
+   return {
+diff --git a/web/test/pure.test.js b/web/test/pure.test.js
+index 766e9d0..aa67cbd 100644
+--- a/web/test/pure.test.js
++++ b/web/test/pure.test.js
+@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
+ import { classifySurface, surfaceToProfile } from "../lib/ors.js";
+ import { raceFit, resolveRace, RACES, DEFAULT_RACE_ID } from "../lib/race.js";
+ import { analyzeTraining, suggestToday } from "../lib/strava.js";
+-import { smoothElevations, accumulate } from "../lib/elevation.js";
++import { smoothElevations, accumulate, cumulativeM } from "../lib/elevation.js";
+ 
+ const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+ 
+@@ -124,10 +124,36 @@ test("suggestToday always returns a runnable distance", () => {
+ 
+ test("smoothElevations removes isolated spikes", () => {
+   const noisy = [10, 10, 40, 10, 10, 10, 11, 10];
+-  const clean = smoothElevations(noisy, 5);
++  const clean = smoothElevations(noisy);
+   assert.ok(Math.max(...clean) < 20, `spike survived: ${clean}`);
+ });
+ 
++test("a distance window rejects a sustained building plateau", () => {
++  // 60 points ~27 m apart (the real sampling density), flat ground at 15 m,
++  // with a ~160 m run of rooftop at 46 m — the width of a city block.
++  const latlngs = [];
++  for (let i = 0; i < 60; i++) latlngs.push([29.76 + i * 0.00024, -95.37]);
++  const eles = latlngs.map((_, i) => (i >= 20 && i < 26 ? 46 : 15));
++  const narrow = smoothElevations(eles, latlngs, 100);  // ~4 points
++  const wide = smoothElevations(eles, latlngs, 500);    // ~19 points
++  assert.ok(Math.max(...narrow) > 40, "narrow window should NOT reject it");
++  assert.ok(Math.max(...wide) < 20, `wide window should reject it: ${Math.max(...wide)}`);
++});
++
++test("a distance window preserves a genuine long climb", () => {
++  // 2 km of steady ascent, 100 m of gain — must survive smoothing.
++  const latlngs = [];
++  for (let i = 0; i < 80; i++) latlngs.push([39.99 + i * 0.000225, -105.27]);
++  const eles = latlngs.map((_, i) => 1600 + (i / 79) * 100);
++  const { ascentM } = accumulate(smoothElevations(eles, latlngs, 500), 3);
++  assert.ok(ascentM > 80, `real climb was flattened: ${ascentM}`);
++});
++
++test("cumulativeM measures route distance sanely", () => {
++  const km = cumulativeM([[29.76, -95.37], [29.769, -95.37]]);
++  assert.ok(km[1] > 950 && km[1] < 1050, `expected ~1 km, got ${km[1]}`);
++});
++
+ test("accumulate ignores jitter below the threshold", () => {
+   const jitter = [];
+   for (let i = 0; i < 200; i++) jitter.push(100 + (i % 2 ? 1 : -1)); // 2 m swings

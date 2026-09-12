@@ -12,8 +12,10 @@
 // Two fixes, applied in order:
 //   1. Re-sample elevation from Copernicus DEM (Open-Meteo's elevation API —
 //      free, keyless, batched), which is markedly better than SRTM over cities.
-//   2. Denoise whatever we end up with: median smoothing to kill spikes, then
-//      hysteresis accumulation so only sustained climbs count.
+//   2. Denoise whatever we end up with: a distance-windowed median filter (both
+//      DEMs are SURFACE models and report building rooftops, which a narrow
+//      filter cannot reject), then hysteresis accumulation so only sustained
+//      climbs count.
 //
 // Step 1 is best-effort. Any failure — network, timeout, malformed response,
 // ELEVATION_SOURCE=ors — falls back to the ORS values, which still get step 2.
@@ -33,14 +35,67 @@ function median(win) {
   return s[s.length >> 1];
 }
 
-// Median filter: removes isolated spikes (a bridge deck, a building edge in the
-// DEM) without shifting a genuine hill the way a mean would.
-export function smoothElevations(elesM, win = 7) {
+// Median filter over a window measured in METRES OF ROUTE, not in points.
+//
+// Window width is the whole game here. Copernicus (like SRTM) is a Digital
+// SURFACE Model: it includes buildings. A city block of towers doesn't show up
+// as an isolated spike a narrow filter can reject — it's a sustained plateau,
+// six or ten consecutive points sitting on a roof. On the measured downtown
+// Houston loop, 8% of points read above 90 ft against a true ground level of
+// ~49 ft, and a 7-point window left 50 ft/mi of phantom climb. A ~500 m window
+// reduces the same route to 14 ft/mi, which matches reality.
+//
+// A median rejects a plateau only while it occupies less than half the window,
+// so a 500 m window handles built-up blocks up to ~250 m across. Wider than
+// that — a single very long structure, an elevated freeway run — still leaks.
+//
+// The trade-off, stated plainly: real terrain features shorter than about
+// 250 m get flattened too. For scoring a running route against a goal race
+// that's the right call; for a hill-rep route it under-reports.
+export const SMOOTH_WINDOW_M = Number(process.env.ELEVATION_SMOOTH_M || 500);
+
+// Great-circle metres between two [lat, lng] points.
+function haversineM(a, b) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+export function cumulativeM(latlngs) {
+  const out = [0];
+  for (let i = 1; i < latlngs.length; i++) {
+    out[i] = out[i - 1] + haversineM(latlngs[i - 1], latlngs[i]);
+  }
+  return out;
+}
+
+// latlngs optional: without them the window falls back to a fixed point count,
+// which is what the pure unit tests exercise.
+export function smoothElevations(elesM, latlngs = null, windowM = SMOOTH_WINDOW_M) {
   if (!Array.isArray(elesM) || elesM.length < 3) return elesM || [];
-  const h = win >> 1;
-  return elesM.map((_, i) =>
-    median(elesM.slice(Math.max(0, i - h), Math.min(elesM.length, i + h + 1)))
-  );
+
+  if (!latlngs || latlngs.length !== elesM.length) {
+    const h = 3;
+    return elesM.map((_, i) =>
+      median(elesM.slice(Math.max(0, i - h), Math.min(elesM.length, i + h + 1)))
+    );
+  }
+
+  const cum = cumulativeM(latlngs);
+  const half = windowM / 2;
+  let lo = 0;
+  let hi = 0;
+  return elesM.map((_, i) => {
+    while (cum[i] - cum[lo] > half) lo++;
+    while (hi < elesM.length - 1 && cum[hi + 1] - cum[i] <= half) hi++;
+    if (hi < i) hi = i;
+    return median(elesM.slice(lo, hi + 1));
+  });
 }
 
 // Hysteresis accumulation: bank a climb only once it exceeds `thresholdM` from
@@ -139,7 +194,7 @@ export async function elevationProfile(coords) {
   const source = fetched ? "copernicus" : "srtm";
   const rawM = fetched || orsM;
 
-  const smoothM = smoothElevations(rawM);
+  const smoothM = smoothElevations(rawM, latlngs);
   const { ascentM, descentM } = accumulate(smoothM);
 
   return {

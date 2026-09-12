@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { classifySurface, surfaceToProfile } from "../lib/ors.js";
 import { raceFit, resolveRace, RACES, DEFAULT_RACE_ID } from "../lib/race.js";
 import { analyzeTraining, suggestToday } from "../lib/strava.js";
-import { smoothElevations, accumulate } from "../lib/elevation.js";
+import { smoothElevations, accumulate, cumulativeM } from "../lib/elevation.js";
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
@@ -124,8 +124,34 @@ test("suggestToday always returns a runnable distance", () => {
 
 test("smoothElevations removes isolated spikes", () => {
   const noisy = [10, 10, 40, 10, 10, 10, 11, 10];
-  const clean = smoothElevations(noisy, 5);
+  const clean = smoothElevations(noisy);
   assert.ok(Math.max(...clean) < 20, `spike survived: ${clean}`);
+});
+
+test("a distance window rejects a sustained building plateau", () => {
+  // 60 points ~27 m apart (the real sampling density), flat ground at 15 m,
+  // with a ~160 m run of rooftop at 46 m — the width of a city block.
+  const latlngs = [];
+  for (let i = 0; i < 60; i++) latlngs.push([29.76 + i * 0.00024, -95.37]);
+  const eles = latlngs.map((_, i) => (i >= 20 && i < 26 ? 46 : 15));
+  const narrow = smoothElevations(eles, latlngs, 100);  // ~4 points
+  const wide = smoothElevations(eles, latlngs, 500);    // ~19 points
+  assert.ok(Math.max(...narrow) > 40, "narrow window should NOT reject it");
+  assert.ok(Math.max(...wide) < 20, `wide window should reject it: ${Math.max(...wide)}`);
+});
+
+test("a distance window preserves a genuine long climb", () => {
+  // 2 km of steady ascent, 100 m of gain — must survive smoothing.
+  const latlngs = [];
+  for (let i = 0; i < 80; i++) latlngs.push([39.99 + i * 0.000225, -105.27]);
+  const eles = latlngs.map((_, i) => 1600 + (i / 79) * 100);
+  const { ascentM } = accumulate(smoothElevations(eles, latlngs, 500), 3);
+  assert.ok(ascentM > 80, `real climb was flattened: ${ascentM}`);
+});
+
+test("cumulativeM measures route distance sanely", () => {
+  const km = cumulativeM([[29.76, -95.37], [29.769, -95.37]]);
+  assert.ok(km[1] > 950 && km[1] < 1050, `expected ~1 km, got ${km[1]}`);
 });
 
 test("accumulate ignores jitter below the threshold", () => {
