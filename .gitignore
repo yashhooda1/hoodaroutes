@@ -12,3 +12,8 @@ bin/
 .env*
 .vercel
 *.patch
+# Apple Watch app: the Xcode project is generated from watch-apple/project.yml
+*.xcodeproj
+xcuserdata/
+DerivedData/
+.DS_Store

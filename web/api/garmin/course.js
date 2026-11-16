@@ -3,6 +3,7 @@
 //
 //   ?format=gpx  (default)  for Garmin Connect import / handheld devices
 //   ?format=fit             for the Connect IQ app to pull over the air
+//   ?format=json            for the Apple Watch app (geometry + summary)
 //
 // The FIT path is what makes "send to my watch" work for anyone: Connect IQ
 // can download a FIT course and the system files it into the device's course
@@ -10,6 +11,7 @@
 import { generateLoop } from "../../lib/ors.js";
 import { toGpx } from "../../lib/gpx.js";
 import { encodeCourseFit } from "../../lib/fit.js";
+import { toCourseJson } from "../../lib/coursejson.js";
 import { enforce } from "../../lib/ratelimit.js";
 
 export default async function handler(req, res) {
@@ -45,6 +47,12 @@ export default async function handler(req, res) {
         `attachment; filename="hoodaroutes-${route.distanceMi}mi.fit"`
       );
       return res.status(200).send(fit);
+    }
+
+    if (format === "json") {
+      // Same seed -> same loop, so this is safe to cache at the edge.
+      res.setHeader("Cache-Control", "s-maxage=600");
+      return res.status(200).json(toCourseJson({ name, route }));
     }
 
     const gpx = toGpx({ name, coordinates: route.coordinates });

@@ -1,0 +1,27 @@
+# XcodeGen spec — `brew install xcodegen && xcodegen` in this folder writes
+# HoodaRoutesWatch.xcodeproj. The project file itself is not committed.
+name: HoodaRoutesWatch
+options:
+  bundleIdPrefix: ai.yashhooda
+  deploymentTarget:
+    watchOS: "10.0"
+  createIntermediateGroups: true
+targets:
+  HoodaRoutes:
+    type: application
+    platform: watchOS
+    sources:
+      - path: HoodaRoutes
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.yashhooda.hoodaroutes.watch
+        PRODUCT_NAME: HoodaRoutes
+        INFOPLIST_FILE: HoodaRoutes/Info.plist
+        CODE_SIGN_ENTITLEMENTS: HoodaRoutes/HoodaRoutes.entitlements
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "4"
+        SWIFT_VERSION: "5.0"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"

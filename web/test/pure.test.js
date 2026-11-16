@@ -9,6 +9,7 @@ import { raceFit, resolveRace, RACES, DEFAULT_RACE_ID } from "../lib/race.js";
 import { analyzeTraining, suggestToday } from "../lib/strava.js";
 import { smoothElevations, accumulate, cumulativeM } from "../lib/elevation.js";
 import { encodeCourseFit, crc16 } from "../lib/fit.js";
+import { toCourseJson } from "../lib/coursejson.js";
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
@@ -312,4 +313,32 @@ test("FIT downsamples very long routes instead of emitting thousands of points",
 test("encodeCourseFit refuses geometry it cannot make a course from", () => {
   assert.throws(() => encodeCourseFit({ name: "T", coordinates: [] }));
   assert.throws(() => encodeCourseFit({ name: "T", coordinates: [[0, 0, 0]] }));
+});
+
+// ------------------------------------------------------- Apple Watch course
+
+test("toCourseJson keeps GeoJSON order, rounds, and drops bad points", () => {
+  const out = toCourseJson({
+    name: "HoodaRoutes 5mi",
+    route: {
+      distanceMi: 5.02, ascentFt: 88, descentFt: 90, surface: "road",
+      profile: "foot-walking", elevationSource: "copernicus",
+      coordinates: [
+        [-97.62000049, 30.43940051, 201.26],
+        [-97.6201, 30.4395, null],        // no DEM value -> 2-element point
+        [NaN, 30.44, 200],                // unusable -> dropped
+        [-97.6202, 30.4396, undefined],
+      ],
+    },
+  });
+  assert.equal(out.name, "HoodaRoutes 5mi");
+  assert.equal(out.distanceMi, 5.02);
+  assert.equal(out.surface, "road");
+  assert.deepEqual(out.coordinates, [
+    [-97.62, 30.439401, 201.3],
+    [-97.6201, 30.4395],
+    [-97.6202, 30.4396],
+  ]);
+  // Must survive a JSON round trip with no nulls: the watch decodes [[Double]].
+  assert.ok(!JSON.stringify(out.coordinates).includes("null"));
 });
