@@ -1,14 +1,15 @@
 # HoodaRoutes
 
 Worldwide running-route generation, personalized to each runner's Strava training,
-with a Garmin Forerunner companion. **One repo, three deploy targets** — keep them
-separate because they have three different runtimes.
+with Garmin Forerunner and Apple Watch companions. **One repo, three deploy targets
+plus two watch apps** — keep them separate because they have different runtimes.
 
 ```
 hoodaroutes/
 ├─ web/               → Vercel    (static site + Node serverless API + Strava OAuth)
 ├─ garmin-push/       → Railway   (Python FastAPI: pushes courses to Garmin Connect)
-└─ watch-connectiq/   → sideload  (Garmin Connect IQ app — built locally, not hosted)
+├─ watch-connectiq/   → sideload  (Garmin Connect IQ app — built locally, not hosted)
+└─ watch-apple/       → Xcode     (Apple Watch app — built locally, not hosted)
 ```
 
 ## Where each part goes (and why)
@@ -63,6 +64,12 @@ Point `GARMIN_PUSH_URL` (in Vercel) at this service.
 Built with the Connect IQ SDK + VS Code and sideloaded to your FR970 (or published to
 the Connect IQ store). Set `BASE_URL` in `source/HoodaRoutesApp.mc` to your `web/`
 deployment. See `watch-connectiq` files and the build steps you already have.
+
+### `watch-apple/` → **not hosted**
+Standalone watchOS app (SwiftUI). Lists loops from the watch's position, shows
+the chosen one on a map with off-route haptics, and records the run to Health.
+Build with Xcode — see `watch-apple/README.md`. `baseURL` lives in
+`HoodaRoutes/App/Config.swift`.
 
 ## Goal race
 
@@ -122,7 +129,7 @@ training analysis. CI runs it on Node 20 and 22 alongside a credential scan.
 | `GET  /api/race` · `POST /api/race` | read / set the goal race |
 | `POST /api/routes/save` · `GET /api/routes/list` | route history (dashboard) |
 | `POST /api/garmin/push` · `push-official` | create a Garmin course |
-| `GET  /api/garmin/routes` · `course` | watch options / GPX |
+| `GET  /api/garmin/routes` · `course` | watch options / course as GPX, FIT or JSON |
 
 `/api/routes/generate` and `/api/routes/interpret` are intentionally
 unauthenticated (drop a pin, get a loop) and therefore IP rate limited — 60
@@ -130,7 +137,7 @@ generations and 20 interpretations per hour, enforced through the same Upstash.
 
 ## Sending a route to a watch
 
-Two paths, deliberately:
+Three paths, deliberately:
 
 - **GPX** (`/api/garmin/course`) — download, import to Garmin Connect → Courses,
   sync. Works for everyone, needs no integration.
@@ -144,6 +151,10 @@ The FIT path needs no Garmin account linkage and no Developer Program approval,
 which is why it exists. The official multi-user route is Garmin's Courses API
 (OAuth 2.0, pushes into the user's Garmin Connect account) — `lib/garmin-official.js`
 targets it, and it stays dormant until Garmin approves a partner application.
+
+- **JSON, for Apple Watch** (`/api/garmin/course?format=json`) — watchOS has no
+  native course list to drop a file into and Apple's Workout app can't import a
+  route, so the `watch-apple/` app fetches the geometry and navigates it itself.
 
 `garmin-push/` remains single-user: it holds *one* set of Garmin credentials
 (yours). Do not point it at other people's accounts — that path needs their
